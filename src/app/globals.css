@@ -1,0 +1,149 @@
+@import "tailwindcss";
+
+/* ──────────────────────────────────────────────────────────────
+   Design tokens — thème sombre unique (choisi, pas un flip auto).
+   Les couleurs de données ont été validées (bande de clarté OKLCH,
+   plancher de chroma, séparation daltonisme, contraste sur surface).
+   ────────────────────────────────────────────────────────────── */
+@theme {
+  --color-bg: #0a0a10;
+  --color-panel: #14141c;
+  --color-panel-2: #1c1c26;
+  --color-panel-3: #232330;
+  --color-line: #262633;
+  --color-line-soft: #1e1e2a;
+
+  --color-ink: #ededf5;
+  --color-ink-2: #9b9bb0;
+  --color-ink-3: #6b6b80;
+
+  /* Accent produit */
+  --color-violet: #8b5cf6;
+  --color-violet-bright: #a78bfa;
+  --color-gold: #f5b942;
+  --color-fire: #fb7a3c;
+
+  /* Palette catégorielle validée — ordre fixe, jamais recyclé */
+  --color-cat-sante: #0fa372;
+  --color-cat-travail: #8b5cf6;
+  --color-cat-maison: #c57c05;
+  --color-cat-creativite: #ec4899;
+  --color-cat-social: #2b93e0;
+
+  /* Rampe séquentielle violette — une seule teinte, L monotone */
+  --color-seq-1: #4a3a94;
+  --color-seq-2: #6248c4;
+  --color-seq-3: #7f63e2;
+  --color-seq-4: #a288f2;
+  --color-seq-5: #c6b0ff;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Halo d'ambiance discret derrière l'interface */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(
+      620px circle at 18% -8%,
+      color-mix(in oklab, var(--color-violet) 16%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      520px circle at 92% 4%,
+      color-mix(in oklab, var(--color-fire) 8%, transparent),
+      transparent 70%
+    );
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-violet) 45%, transparent);
+}
+
+/* Scrollbars sobres */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-panel-3) transparent;
+}
+
+@keyframes float-up {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.9);
+  }
+  18% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.04);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-38px) scale(1);
+  }
+}
+
+@keyframes pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+  60% {
+    transform: scale(1.06);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -220% 0;
+  }
+  100% {
+    background-position: 220% 0;
+  }
+}
+
+.anim-float-up {
+  animation: float-up 1.15s ease-out forwards;
+}
+
+.anim-pop-in {
+  animation: pop-in 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* Reflet doré qui balaie la barre d'XP */
+.xp-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 35%,
+    rgb(255 255 255 / 0.35) 50%,
+    transparent 65%
+  );
+  background-size: 220% 100%;
+  animation: shimmer 3.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-float-up,
+  .anim-pop-in,
+  .xp-shimmer::after {
+    animation: none;
+  }
+}

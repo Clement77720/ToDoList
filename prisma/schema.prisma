@@ -1,0 +1,156 @@
+// Schéma QuestList — SQLite en local, Postgres en production (seul le
+// `provider` change). SQLite n'a ni tableaux ni enums : les listes de jours
+// sont stockées en CSV et les énumérations en texte, validées côté TypeScript
+// par les types de src/lib/gamification.ts.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id         String  @id @default(cuid())
+  name       String
+  avatar     String  @default("🦊")
+  level      Int     @default(1)
+  xp         Int     @default(0)
+  coins      Int     @default(0)
+  streak     Int     @default(0)
+  bestStreak Int     @default(0)
+  shields    Int     @default(0)
+
+  /// Dernière date (yyyy-mm-dd) traitée par le job de minuit.
+  lastRollover String?
+
+  createdAt DateTime @default(now())
+
+  categories Category[]
+  routines   Routine[]
+  tasks      Task[]
+  days       DayRecord[]
+  badges     UnlockedBadge[]
+  rewards    Reward[]
+}
+
+model Category {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Identifiant stable utilisé par le code (sante, travail, …).
+  slug  String
+  label String
+  icon  String
+  color String
+  order Int    @default(0)
+  level Int    @default(1)
+  xp    Int    @default(0)
+
+  routines Routine[]
+  tasks    Task[]
+
+  @@unique([userId, slug])
+}
+
+/// Quotidienne récurrente. Chaque jour, le rollover matérialise une Task.
+model Routine {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  title      String
+  difficulty String
+  /// Jours ISO actifs en CSV : "1,2,3,4,5" (1 = lundi).
+  days       String
+  time       String?
+  active     Boolean @default(true)
+  order      Int     @default(0)
+
+  tasks Task[]
+}
+
+model Task {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  /// Renseigné pour les quotidiennes issues d'une routine.
+  routineId String?
+  routine   Routine? @relation(fields: [routineId], references: [id], onDelete: SetNull)
+
+  title      String
+  difficulty String
+  /// quotidienne | hebdomadaire | bonus
+  kind       String
+
+  /// Jour d'exécution (yyyy-mm-dd). null = hebdomadaire encore en réserve.
+  date String?
+  /// Lundi de la semaine de rattachement — sert aux hebdomadaires.
+  weekStart String?
+
+  done   Boolean   @default(false)
+  doneAt DateTime?
+  time   String?
+
+  /// Empêche de débiter deux fois le malus d'une même tâche.
+  malusApplied Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, date])
+  @@index([userId, weekStart])
+}
+
+/// Bilan figé d'une journée, écrit par le rollover.
+model DayRecord {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  date    String
+  done    Int
+  total   Int
+  gained  Int
+  malus   Int
+  success Boolean
+  perfect Boolean
+
+  @@unique([userId, date])
+  @@index([userId, date])
+}
+
+/// Le catalogue de badges reste statique dans le code (c'est une règle) ;
+/// seule la possession est persistée.
+model UnlockedBadge {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badgeId    String
+  unlockedAt DateTime @default(now())
+
+  @@unique([userId, badgeId])
+}
+
+/// Récompenses de la boutique — définies par l'utilisateur.
+model Reward {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  label String
+  icon  String
+  price Int
+  /// reel | cosmetique
+  kind  String
+  note  String?
+  owned Boolean @default(false)
+  order Int     @default(0)
+}

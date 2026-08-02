@@ -1,0 +1,7 @@
+# Normalise les fins de ligne : LF en base, quelle que soit la plateforme.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.db binary

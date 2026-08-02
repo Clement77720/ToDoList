@@ -1,0 +1,21 @@
+﻿node_modules/
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# Variables d'environnement — copier .env.example vers .env
+.env
+.env*.local
+
+# Réglages Claude Code propres à la machine (launch.json reste partagé)
+.claude/settings.local.json
+
+# Base locale et client Prisma généré — recréés par `npm run db:reset`
+# (Prisma 7 résout `file:./dev.db` depuis la racine du projet)
+*.db
+*.db-journal
+src/generated/
+
+.DS_Store
