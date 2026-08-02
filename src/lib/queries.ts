@@ -1,0 +1,429 @@
+import "server-only";
+import { cache } from "react";
+import { prisma } from "./db";
+import { ensureRollover } from "./rollover";
+import { addDays, isoWeekday, startOfWeek, todayISO } from "./dates";
+import { BADGES, categoryXpToNext } from "./catalog";
+import {
+  DIFFICULTIES,
+  isEngagement,
+  MALUS,
+  xpToNextLevel,
+  type DifficultyKey,
+  type TaskKind,
+} from "./gamification";
+import type {
+  BadgeDTO,
+  CategoryDTO,
+  DayDTO,
+  PlayerDTO,
+  RewardDTO,
+  RoutineDTO,
+  TaskDTO,
+} from "./types";
+
+const HEATMAP_DAYS = 182;
+
+type CategoryRow = {
+  id: string;
+  slug: string;
+  label: string;
+  icon: string;
+  color: string;
+  level: number;
+  xp: number;
+};
+
+type TaskRow = {
+  id: string;
+  title: string;
+  difficulty: string;
+  kind: string;
+  date: string | null;
+  weekStart: string | null;
+  done: boolean;
+  time: string | null;
+  category: { slug: string; label: string; icon: string; color: string };
+};
+
+function toTask(t: TaskRow): TaskDTO {
+  return {
+    id: t.id,
+    title: t.title,
+    difficulty: t.difficulty as DifficultyKey,
+    kind: t.kind as TaskKind,
+    date: t.date,
+    weekStart: t.weekStart,
+    done: t.done,
+    time: t.time,
+    category: t.category,
+  };
+}
+
+const taskSelect = {
+  id: true,
+  title: true,
+  difficulty: true,
+  kind: true,
+  date: true,
+  weekStart: true,
+  done: true,
+  time: true,
+  category: { select: { slug: true, label: true, icon: true, color: true } },
+} as const;
+
+/**
+ * Utilisateur courant. Mono-utilisateur pour l'instant : on prend le seul
+ * compte de la base. Le jour de l'authentification, seule cette fonction
+ * change — tout le reste passe déjà par un `userId`.
+ *
+ * `cache()` déduplique l'appel (et donc le rollover) sur une même requête.
+ */
+export const getCurrentUser = cache(async () => {
+  const user = await prisma.user.findFirst({ orderBy: { createdAt: "asc" } });
+  if (!user) {
+    throw new Error(
+      "Aucun utilisateur en base. Lance `npm run db:seed` pour initialiser.",
+    );
+  }
+  await ensureRollover(user.id, todayISO());
+  return prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+});
+
+export const getPlayer = cache(async (): Promise<PlayerDTO> => {
+  const u = await getCurrentUser();
+  return {
+    id: u.id,
+    name: u.name,
+    avatar: u.avatar,
+    level: u.level,
+    xp: u.xp,
+    xpMax: xpToNextLevel(u.level),
+    coins: u.coins,
+    streak: u.streak,
+    bestStreak: u.bestStreak,
+    shields: u.shields,
+  };
+});
+
+export const getCategories = cache(async (): Promise<CategoryDTO[]> => {
+  const u = await getCurrentUser();
+  const rows = await prisma.category.findMany({
+    where: { userId: u.id },
+    orderBy: { order: "asc" },
+  });
+  return rows.map((c: CategoryRow) => ({
+    id: c.id,
+    slug: c.slug,
+    label: c.label,
+    icon: c.icon,
+    color: c.color,
+    level: c.level,
+    xp: c.xp,
+    xpMax: categoryXpToNext(c.level),
+  }));
+});
+
+export async function getTasksForDate(date: string): Promise<TaskDTO[]> {
+  const u = await getCurrentUser();
+  const rows = await prisma.task.findMany({
+    where: { userId: u.id, date },
+    orderBy: [{ kind: "asc" }, { createdAt: "asc" }],
+    select: taskSelect,
+  });
+  return rows.map(toTask);
+}
+
+/** Bilan calculé à la volée — la journée en cours n'est pas encore close. */
+export function dayFromTasks(date: string, tasks: TaskDTO[]): DayDTO {
+  const done = tasks.filter((t) => t.done);
+  const engagements = tasks.filter((t) => isEngagement(t.kind));
+  const gained = done.reduce((s, t) => s + DIFFICULTIES[t.difficulty].xp, 0);
+  const malus = tasks
+    .filter((t) => t.kind === "quotidienne" && !t.done)
+    .reduce((s) => s + MALUS.quotidienne, 0);
+  return {
+    date,
+    done: done.length,
+    total: tasks.length,
+    gained,
+    malus,
+    xp: gained - malus,
+    ratio: tasks.length === 0 ? 0 : done.length / tasks.length,
+    success: engagements.length > 0 && engagements.every((t) => t.done),
+    perfect: tasks.length > 0 && done.length === tasks.length,
+  };
+}
+
+/** Historique clos + journée en cours reconstituée. */
+export const getHistory = cache(async (days = HEATMAP_DAYS): Promise<DayDTO[]> => {
+  const u = await getCurrentUser();
+  const today = todayISO();
+  const from = addDays(today, -(days - 1));
+
+  const rows = await prisma.dayRecord.findMany({
+    where: { userId: u.id, date: { gte: from, lte: today } },
+    orderBy: { date: "asc" },
+  });
+
+  const closed: DayDTO[] = rows.map((d) => ({
+    date: d.date,
+    done: d.done,
+    total: d.total,
+    gained: d.gained,
+    malus: d.malus,
+    xp: d.gained - d.malus,
+    ratio: d.total === 0 ? 0 : d.done / d.total,
+    success: d.success,
+    perfect: d.perfect,
+  }));
+
+  if (!closed.some((d) => d.date === today)) {
+    closed.push(dayFromTasks(today, await getTasksForDate(today)));
+  }
+  return closed;
+});
+
+/** Tâches hebdomadaires d'une semaine : placées et encore en réserve. */
+export async function getWeeklyTasks(weekStart: string): Promise<TaskDTO[]> {
+  const u = await getCurrentUser();
+  const rows = await prisma.task.findMany({
+    where: { userId: u.id, weekStart, kind: "hebdomadaire" },
+    orderBy: { createdAt: "asc" },
+    select: taskSelect,
+  });
+  return rows.map(toTask);
+}
+
+export const getRoutines = cache(async (): Promise<RoutineDTO[]> => {
+  const u = await getCurrentUser();
+  const rows = await prisma.routine.findMany({
+    where: { userId: u.id, active: true },
+    orderBy: { order: "asc" },
+    select: {
+      id: true,
+      title: true,
+      difficulty: true,
+      days: true,
+      time: true,
+      category: { select: { slug: true, label: true, icon: true, color: true } },
+    },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    difficulty: r.difficulty as DifficultyKey,
+    days: r.days.split(",").filter(Boolean).map(Number),
+    time: r.time,
+    category: r.category,
+  }));
+});
+
+/** Journées d'un mois, pour la grille du calendrier. */
+export async function getMonth(
+  year: number,
+  month: number,
+): Promise<Record<string, DayDTO>> {
+  const u = await getCurrentUser();
+  const today = todayISO();
+  const first = new Date(Date.UTC(year, month, 1));
+  const from = addDays(first.toISOString().slice(0, 10), -7);
+  const to = addDays(
+    new Date(Date.UTC(year, month + 1, 0)).toISOString().slice(0, 10),
+    7,
+  );
+
+  const rows = await prisma.dayRecord.findMany({
+    where: { userId: u.id, date: { gte: from, lte: to } },
+  });
+
+  const out: Record<string, DayDTO> = {};
+  for (const d of rows) {
+    out[d.date] = {
+      date: d.date,
+      done: d.done,
+      total: d.total,
+      gained: d.gained,
+      malus: d.malus,
+      xp: d.gained - d.malus,
+      ratio: d.total === 0 ? 0 : d.done / d.total,
+      success: d.success,
+      perfect: d.perfect,
+    };
+  }
+
+  if (today >= from && today <= to && !out[today]) {
+    out[today] = dayFromTasks(today, await getTasksForDate(today));
+  }
+  return out;
+}
+
+/** Nombre de tâches prévues par jour à venir — pastilles du calendrier. */
+export async function getPlannedCounts(
+  from: string,
+  to: string,
+): Promise<Record<string, number>> {
+  const u = await getCurrentUser();
+  const rows = await prisma.task.groupBy({
+    by: ["date"],
+    where: { userId: u.id, date: { gte: from, lte: to } },
+    _count: { _all: true },
+  });
+  const out: Record<string, number> = {};
+  for (const r of rows) if (r.date) out[r.date] = r._count._all;
+  return out;
+}
+
+export const getRewards = cache(async (): Promise<RewardDTO[]> => {
+  const u = await getCurrentUser();
+  const rows = await prisma.reward.findMany({
+    where: { userId: u.id },
+    orderBy: { order: "asc" },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    label: r.label,
+    icon: r.icon,
+    price: r.price,
+    kind: r.kind as "reel" | "cosmetique",
+    note: r.note,
+    owned: r.owned,
+  }));
+});
+
+/* ── Badges ─────────────────────────────────────────────────── */
+
+const metrics = cache(async (): Promise<Record<string, number>> => {
+  const u = await getCurrentUser();
+  const today = todayISO();
+
+  const [doneCount, byCategory, days, categories] = await Promise.all([
+    prisma.task.count({ where: { userId: u.id, done: true } }),
+    prisma.task.groupBy({
+      by: ["categoryId"],
+      where: { userId: u.id, done: true },
+      _count: { _all: true },
+    }),
+    prisma.dayRecord.findMany({
+      where: { userId: u.id },
+      orderBy: { date: "asc" },
+      select: { perfect: true, malus: true },
+    }),
+    getCategories(),
+  ]);
+
+  const catById = new Map(categories.map((c) => [c.id, c.slug]));
+
+  let perfectStreak = 0;
+  let run = 0;
+  for (const d of days) {
+    run = d.perfect ? run + 1 : 0;
+    perfectStreak = Math.max(perfectStreak, run);
+  }
+
+  // Jours consécutifs sans malus, en remontant depuis le plus récent.
+  let noMalusDays = 0;
+  for (let i = days.length - 1; i >= 0 && days[i].malus === 0; i--) {
+    noMalusDays += 1;
+  }
+
+  const weekly = await getWeeklyTasks(startOfWeek(today));
+  const weeklyPlaced =
+    weekly.length === 0
+      ? 100
+      : Math.round((weekly.filter((t) => t.date).length / weekly.length) * 100);
+
+  const out: Record<string, number> = {
+    tasks: doneCount,
+    perfectDays: days.filter((d) => d.perfect).length,
+    perfectStreak,
+    streak: Math.max(u.streak, u.bestStreak),
+    noMalusDays,
+    balancedCategories: Math.min(
+      ...categories.map((c) => c.level),
+      Number.MAX_SAFE_INTEGER,
+    ),
+    weeklyPlaced,
+  };
+  for (const g of byCategory) {
+    const slug = catById.get(g.categoryId);
+    if (slug) out[`cat:${slug}`] = g._count._all;
+  }
+  return out;
+});
+
+export const getBadges = cache(async (): Promise<BadgeDTO[]> => {
+  const u = await getCurrentUser();
+  const [unlockedRows, m] = await Promise.all([
+    prisma.unlockedBadge.findMany({ where: { userId: u.id } }),
+    metrics(),
+  ]);
+  const unlocked = new Map(
+    unlockedRows.map((r) => [
+      r.badgeId,
+      r.unlockedAt.toLocaleDateString("fr-FR", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      }),
+    ]),
+  );
+
+  return BADGES.map((b) => ({
+    ...b,
+    unlocked: unlocked.has(b.id),
+    unlockedOn: unlocked.get(b.id) ?? null,
+    progress:
+      b.metric && b.goal !== undefined && !unlocked.has(b.id)
+        ? { current: Math.min(m[b.metric] ?? 0, b.goal), goal: b.goal }
+        : null,
+  }));
+});
+
+/** Badges nouvellement mérités — appelé après chaque mutation. */
+export async function grantEarnedBadges(userId: string): Promise<string[]> {
+  const [existing, m] = await Promise.all([
+    prisma.unlockedBadge.findMany({ where: { userId } }),
+    metrics(),
+  ]);
+  const have = new Set(existing.map((r) => r.badgeId));
+
+  const earned = BADGES.filter(
+    (b) =>
+      !have.has(b.id) &&
+      b.metric &&
+      b.goal !== undefined &&
+      (m[b.metric] ?? 0) >= b.goal,
+  ).map((b) => b.id);
+
+  if (earned.length > 0) {
+    await prisma.unlockedBadge.createMany({
+      data: earned.map((badgeId) => ({ userId, badgeId })),
+    });
+  }
+  return earned;
+}
+
+/* ── Agrégats de la page Statistiques ───────────────────────── */
+
+export async function getWeeklyXp(): Promise<{ label: string; xp: number }[]> {
+  const history = await getHistory(84);
+  const weeks: { label: string; xp: number }[] = [];
+
+  // On aligne les paquets de 7 sur le lundi de la première semaine pleine.
+  const offset = (isoWeekday(history[0]?.date ?? todayISO()) - 1) % 7;
+  const aligned = history.slice(offset);
+
+  for (let i = 0; i + 7 <= aligned.length; i += 7) {
+    const slice = aligned.slice(i, i + 7);
+    weeks.push({
+      label: new Date(`${slice[0].date}T00:00:00Z`).toLocaleDateString("fr-FR", {
+        day: "2-digit",
+        month: "2-digit",
+        timeZone: "UTC",
+      }),
+      xp: slice.reduce((s, d) => s + d.xp, 0),
+    });
+  }
+  return weeks;
+}
