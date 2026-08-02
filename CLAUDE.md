@@ -1,0 +1,167 @@
+# CLAUDE.md
+
+Guide de travail pour ce dépôt. Le [README](README.md) explique le *produit* et
+les règles du jeu ; ce fichier décrit comment y toucher sans rien casser.
+
+**QuestList** — to-do list gamifiée. Next.js 16 (App Router) · React 19 ·
+Tailwind 4 · Prisma 7 · SQLite. Mono-utilisateur, pas d'authentification.
+Interface, commentaires et vocabulaire métier sont **en français** : garder
+cette langue dans tout nouveau code.
+
+## Commandes
+
+```bash
+npm install          # postinstall lance `prisma generate`
+cp .env.example .env # requis : DATABASE_URL n'est pas dans schema.prisma
+npm run db:reset     # recrée la base + rejoue le seed
+npm run dev          # http://localhost:3000
+npm run build        # compile ET typecheck — le seul filet de sécurité
+```
+
+**Il n'y a ni tests ni linter.** `npm run build` est la vérification :
+`next.config.ts` active `experimental.useTypeScriptCli`, donc le build fait
+tourner `tsc` (TypeScript 7 n'expose plus l'API compilateur attendue par Next).
+Toujours le lancer avant de committer.
+
+Le client Prisma est généré dans `src/generated/` — **gitignoré**. Après un
+clone frais ou un changement de schéma : `npx prisma generate`, sinon les
+imports `@/generated/prisma/client` échouent.
+
+## Architecture — les invariants
+
+| Règle | Où |
+|---|---|
+| Toutes les mutations sont des Server Actions | `src/app/actions.ts`, un seul fichier |
+| Toutes les lectures serveur passent par des DTO plats | `src/lib/queries.ts` → `src/lib/types.ts` |
+| **Aucun objet Prisma ne traverse la frontière serveur/client** | les composants ne reçoivent que des DTO |
+| `db.ts`, `queries.ts`, `rollover.ts` sont marqués `server-only` | ne jamais les importer d'un composant client |
+| Les pages (`src/app/*/page.tsx`) sont des composants **serveur** | elles lisent, elles ne mutent pas |
+| Tout `src/components/*.tsx` est `"use client"` **sauf `ui.tsx`** | primitives partagées, sans état |
+| Rendu à la demande | `export const dynamic = "force-dynamic"` dans `layout.tsx` |
+
+Une Server Action doit toujours :
+1. partir de `getCurrentUser()` et filtrer ses requêtes sur `userId` ;
+2. revérifier côté serveur ce que l'UI a déjà contrôlé (ex. le quota de 4
+   engagements — le client peut mentir) ;
+3. appeler `grantEarnedBadges(user.id)` si l'action peut débloquer un badge ;
+4. finir par `refresh()` (`revalidatePath("/", "layout")`) ;
+5. renvoyer un `ActionResult` (`{ ok: true, xp?, coins?, badges?, levelUp? }`
+   ou `{ ok: false, error }`) — jamais lever d'exception pour une erreur métier.
+
+La mise à jour optimiste vit côté client (`useOptimistic` dans `TodayTasks`,
+`WeekPlanner`, `RoutinesEditor`). Si tu ajoutes une action mutative visible
+immédiatement, prévois le pendant optimiste, sinon la coche « clignote ».
+
+### `getCurrentUser()` — la couture de l'authentification
+
+`src/lib/queries.ts:82`. Prend le premier `User` de la base et déclenche
+`ensureRollover()`. Enveloppée dans `cache()` : dédupliquée sur une requête,
+donc le rollover ne tourne qu'une fois. **C'est le seul point à changer le jour
+de l'authentification** — tout le reste travaille déjà à partir d'un `userId`.
+
+## Modèle de données
+
+SQLite n'a ni tableaux ni enums, d'où trois conventions à respecter :
+
+- `Task.kind` = `"quotidienne" | "hebdomadaire" | "bonus"`, `Task.difficulty` =
+  `"facile" | "moyenne" | "difficile"`, `Reward.kind` = `"reel" | "cosmetique"`.
+  Ce sont des **String** en base, validés uniquement par les types TypeScript de
+  `src/lib/gamification.ts`. Une valeur hors liste passe l'insertion et casse à
+  la lecture.
+- `Routine.days` est du **CSV ISO** : `"1,2,3,4,5"` (1 = lundi, 7 = dimanche).
+- Les dates sont des chaînes **`yyyy-mm-dd`**, jamais des `Date`.
+
+`src/lib/dates.ts` fait tous les calculs **en UTC** pour que serveur et client
+tombent d'accord. Seul `todayISO()` lit l'horloge locale : il s'appelle côté
+serveur, et la date descend en props. **Ne jamais recalculer « aujourd'hui »
+dans un composant client** — l'hydratation diverge au premier changement de
+fuseau.
+
+Une hebdomadaire encore en réserve a `date: null` et un `weekStart` renseigné.
+C'est ce qui la distingue d'une hebdomadaire placée.
+
+## Le rollover (`src/lib/rollover.ts`)
+
+Le « job de minuit », rattrapé paresseusement au premier chargement du jour. Il
+fige les `DayRecord`, débite les quotidiennes oubliées, applique le malus
+hebdomadaire le dimanche, fait avancer la série (en consommant un joker) puis
+matérialise les tâches du jour à partir des routines.
+
+Deux garde-fous d'idempotence, **à ne jamais contourner** :
+`User.lastRollover` (un jour n'est clos qu'une fois) et `Task.malusApplied`
+(une tâche n'est débitée qu'une fois). Rattrapage plafonné à
+`MAX_CATCHUP_DAYS = 120` jours.
+
+## Où changer quoi
+
+| Besoin | Fichier |
+|---|---|
+| Rééquilibrer XP, malus, séries, plafonds, niveaux | `src/lib/gamification.ts` — la source de vérité |
+| Ajouter un badge, une catégorie, une routine/récompense par défaut | `src/lib/catalog.ts` |
+| Calculer un compteur de badge | `metrics()` dans `src/lib/queries.ts:296` |
+| Ajouter une mutation | `src/app/actions.ts` |
+| Couleurs, tokens de design | `@theme` dans `src/app/globals.css` |
+| Historique de démo | `prisma/seed.ts` |
+
+Le catalogue statique (badges, catégories) est une **règle**, pas une donnée :
+la base ne mémorise que ce qui est propre au joueur (possession d'un badge,
+niveau d'une catégorie, jours actifs d'une routine).
+
+## Style
+
+- **Aucun hex en dur dans un composant.** Passer par les tokens de
+  `globals.css` (`bg-panel`, `text-ink-2`, `border-line`, `--color-cat-*`,
+  `--color-seq-*`).
+- Les couleurs de données ont été **validées au calcul** (bande de clarté
+  OKLCH, plancher de chroma, séparation daltonisme protan/deutan, contraste sur
+  la surface sombre) — ne pas en ajouter à l'œil. La palette catégorielle est
+  d'ordre fixe et jamais recyclée.
+- Thème sombre unique, assumé : pas de bascule clair/sombre.
+- Réutiliser `Card`, `CardTitle`, `PageHeader`, `ProgressBar`, `Stat`,
+  `CategoryChip` de `src/components/ui.tsx` avant d'inventer une variante.
+- Graphiques (radar, heatmap, barres) faits main en SVG/CSS — pas de
+  bibliothèque de charts, ne pas en introduire.
+- Alias d'import : `@/*` → `src/*`.
+
+## Pièges connus
+
+Points réels du code actuel, à connaître avant de conclure à un bug :
+
+- **`DAILY_XP_CAP` (250 XP/jour) n'est pas appliqué.** La constante est
+  seulement *affichée* (`src/app/page.tsx:181`, `src/app/stats/page.tsx:242`) ;
+  ni `toggleTaskAction` ni `closeDay` ne la font respecter. L'interface annonce
+  un plafond anti-farm qui n'existe pas côté serveur.
+- **10 badges sur 31 ne peuvent jamais se débloquer.** `grantEarnedBadges()`
+  n'accorde qu'un badge portant `metric` + `goal`. Les 4 temporels autres
+  qu'`anticipateur` et les 6 secrets n'en ont pas : ils sont décoratifs. Leur
+  donner une `metric` implique de l'implémenter dans `metrics()`.
+- **Niveau de catégorie et niveau de joueur ne suivent pas la même règle.**
+  `LEVEL_FLOOR_PROTECTION` empêche le joueur de rétrograder
+  (`applyXpDelta`), mais `addCategoryXp` (`src/app/actions.ts:32`) fait bien
+  redescendre une catégorie. Deux courbes distinctes également :
+  `xpToNextLevel` = `100 × n^1,4` (joueur) contre `categoryXpToNext` =
+  `80 × n^1,25` (catégorie).
+- **Rééquilibrer ne réécrit pas le passé.** Les `DayRecord` sont figés : changer
+  un barème ne recalcule pas l'historique. Pour une démo cohérente après un
+  changement de règles, refaire `npm run db:reset`.
+- **Le seed est relatif à aujourd'hui.** Le PRNG est à graine fixe (`4242`),
+  mais les dates sont calculées depuis `todayISO()` : rejouer le seed un autre
+  jour produit un historique décalé. Un bug « qui n'apparaît que le dimanche »
+  est plausible — le rollover a une branche `isoWeekday(date) === 7`.
+- **`schema.prisma` n'a pas d'`url` dans son bloc `datasource`** : elle vient de
+  `prisma.config.ts` via `DATABASE_URL`. Sans `.env`, toutes les commandes
+  Prisma échouent.
+- Le seed crée un utilisateur nommé **« Clément »** avec des routines et
+  récompenses personnelles (`prisma/seed.ts:95`, `src/lib/catalog.ts`). À
+  neutraliser si le dépôt devient vraiment public.
+
+## Passer en production
+
+1. `provider = "postgresql"` dans `prisma/schema.prisma` + l'adaptateur
+   correspondant dans `src/lib/db.ts` (le reste du schéma est portable).
+2. Remplacer le rollover paresseux par un vrai cron quotidien.
+3. Brancher l'authentification sur `getCurrentUser()`.
+
+## Git
+
+Développement sur `feat/questlist-app-qqficz`. Push : `git push -u origin feat/questlist-app-qqficz`.
