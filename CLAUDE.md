@@ -4,19 +4,28 @@ Guide de travail pour ce dépôt. Le [README](README.md) explique le *produit* e
 les règles du jeu ; ce fichier décrit comment y toucher sans rien casser.
 
 **QuestList** — to-do list gamifiée. Next.js 16 (App Router) · React 19 ·
-Tailwind 4 · Prisma 7 · SQLite. Mono-utilisateur, pas d'authentification.
+Tailwind 4 · Prisma 7 · PostgreSQL. Mono-utilisateur, pas d'authentification.
 Interface, commentaires et vocabulaire métier sont **en français** : garder
 cette langue dans tout nouveau code.
 
 ## Commandes
 
+Un PostgreSQL joignable est nécessaire — plus de fichier SQLite local :
+
 ```bash
+docker run -d --name questlist-db -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=questlist -p 5432:5432 postgres:16
+
 npm install          # postinstall lance `prisma generate`
 cp .env.example .env # requis : DATABASE_URL n'est pas dans schema.prisma
 npm run db:reset     # recrée la base + rejoue le seed
 npm run dev          # http://localhost:3000
 npm run build        # compile ET typecheck — le seul filet de sécurité
 ```
+
+`npm run build` ne se connecte pas à la base (toutes les routes sont
+dynamiques) : il reste lançable sans Postgres. `vercel-build` est la variante
+de déploiement, elle joue `prisma migrate deploy` avant de compiler.
 
 **Il n'y a ni tests ni linter.** `npm run build` est la vérification :
 `next.config.ts` active `experimental.useTypeScriptCli`, donc le build fait
@@ -61,7 +70,9 @@ de l'authentification** — tout le reste travaille déjà à partir d'un `userI
 
 ## Modèle de données
 
-SQLite n'a ni tableaux ni enums, d'où trois conventions à respecter :
+Trois conventions héritées de SQLite, **conservées après le passage à
+Postgres** — les convertir en vrais enums/tableaux toucherait le seed et
+toutes les lectures pour un gain nul tant que TypeScript valide :
 
 - `Task.kind` = `"quotidienne" | "hebdomadaire" | "bonus"`, `Task.difficulty` =
   `"facile" | "moyenne" | "difficile"`, `Reward.kind` = `"reel" | "cosmetique"`.
@@ -155,12 +166,25 @@ Points réels du code actuel, à connaître avant de conclure à un bug :
   récompenses personnelles (`prisma/seed.ts:95`, `src/lib/catalog.ts`). À
   neutraliser si le dépôt devient vraiment public.
 
-## Passer en production
+## Déploiement (Vercel + Neon)
 
-1. `provider = "postgresql"` dans `prisma/schema.prisma` + l'adaptateur
-   correspondant dans `src/lib/db.ts` (le reste du schéma est portable).
-2. Remplacer le rollover paresseux par un vrai cron quotidien.
-3. Brancher l'authentification sur `getCurrentUser()`.
+`vercel-build` joue `prisma migrate deploy` avant `next build` : le schéma
+suit tout seul. `DATABASE_URL` se définit dans les variables d'environnement
+Vercel, avec la connection string **poolée** de Neon (hôte en `-pooler`) —
+sans elle, les pools des instances serverless épuisent les connexions.
+
+Une base fraîche est vide, donc `getCurrentUser()` lève. Amorcer une fois :
+`DATABASE_URL="<url-neon>" npm run db:seed`.
+
+Deux chantiers restent ouverts avant une mise en ligne publique :
+
+1. **L'authentification.** Sans elle, tout visiteur partage le compte unique.
+   Garder le déploiement protégé par mot de passe en attendant.
+2. **Le rollover en cron.** Il est déclenché par la première requête du jour ;
+   en serverless, deux requêtes concurrentes peuvent entrer ensemble dans
+   `ensureRollover()` — la garde `lastRollover` est lue au début et écrite à la
+   fin — et appliquer deux fois malus et XP. Un Vercel Cron quotidien règle le
+   problème.
 
 ## Git
 

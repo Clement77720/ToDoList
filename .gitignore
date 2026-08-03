@@ -12,10 +12,7 @@ next-env.d.ts
 # Réglages Claude Code propres à la machine (launch.json reste partagé)
 .claude/settings.local.json
 
-# Base locale et client Prisma généré — recréés par `npm run db:reset`
-# (Prisma 7 résout `file:./dev.db` depuis la racine du projet)
-*.db
-*.db-journal
+# Client Prisma généré — recréé par `prisma generate` (postinstall)
 src/generated/
 
 .DS_Store

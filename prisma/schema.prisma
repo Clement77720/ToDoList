@@ -1,7 +1,10 @@
-// Schéma QuestList — SQLite en local, Postgres en production (seul le
-// `provider` change). SQLite n'a ni tableaux ni enums : les listes de jours
-// sont stockées en CSV et les énumérations en texte, validées côté TypeScript
-// par les types de src/lib/gamification.ts.
+// Schéma QuestList — PostgreSQL (Neon en production, instance locale en dev).
+//
+// Les listes de jours sont stockées en CSV et les énumérations en texte,
+// validées côté TypeScript par les types de src/lib/gamification.ts. C'est
+// un héritage de SQLite, conservé volontairement : passer à de vrais enums
+// Postgres toucherait le seed et toutes les lectures pour un gain nul tant
+// que la validation TypeScript tient.
 
 generator client {
   provider = "prisma-client"
@@ -9,7 +12,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 model User {

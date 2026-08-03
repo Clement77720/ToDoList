@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import {
   BADGES,
@@ -21,10 +21,14 @@ import {
 import { addDays, isoWeekday, startOfWeek, todayISO } from "../src/lib/dates";
 
 const prisma = new PrismaClient({
-  adapter: new PrismaBetterSqlite3({
-    url: process.env.DATABASE_URL ?? "file:./dev.db",
-  }),
+  adapter: new PrismaPg({ connectionString: requireDatabaseUrl() }),
 });
+
+function requireDatabaseUrl(): string {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL manquante — copier .env.example vers .env.");
+  return url;
+}
 
 /** PRNG à graine fixe : deux `db seed` produisent la même base. */
 function mulberry32(seed: number) {
