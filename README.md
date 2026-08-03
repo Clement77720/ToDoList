@@ -1,11 +1,18 @@
 # QuestList — la to-do list gamifiée
 
 Application Next.js 16 + React 19 + Tailwind 4, avec persistance **Prisma +
-SQLite**. Tout est écrit en base : cocher une tâche, la déplacer, encaisser un
-malus, acheter une récompense. Pas encore d'authentification — un seul compte,
-créé par le seed.
+PostgreSQL**. Tout est écrit en base : cocher une tâche, la déplacer, encaisser
+un malus, acheter une récompense. Pas encore d'authentification — un seul
+compte, créé par le seed.
 
 ## Démarrer
+
+Il faut un PostgreSQL joignable. Le plus rapide en local :
+
+```bash
+docker run -d --name questlist-db -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=questlist -p 5432:5432 postgres:16
+```
 
 ```bash
 npm install
@@ -34,6 +41,7 @@ il y a cinq semaines, puis la remontée en cours. Les dates sont relatives à
 |---|---|
 | `npm run db:reset` | recrée la base et rejoue le seed |
 | `npm run db:seed` | rejoue le seed seul |
+| `npm run db:deploy` | applique les migrations sans toucher aux données |
 | `npm run db:studio` | ouvre Prisma Studio sur la base |
 
 ## Les 6 écrans
@@ -148,16 +156,35 @@ src/
     queries.ts      lectures serveur, typées en DTO
     rollover.ts     le job de minuit
     dates.ts        helpers yyyy-mm-dd, tout en UTC
-    db.ts           client Prisma (singleton, adaptateur better-sqlite3)
+    db.ts           client Prisma (singleton, adaptateur node-postgres)
 ```
 
 Aucun objet Prisma ne traverse la frontière serveur/client : les composants ne
 reçoivent que les DTO plats de `src/lib/types.ts`.
 
-## Passer en production
+## Déployer sur Vercel + Neon
 
-1. `provider = "postgresql"` dans `prisma/schema.prisma`, et l'adaptateur
-   correspondant dans `src/lib/db.ts`
-2. Remplacer le rollover paresseux par un vrai cron quotidien
-3. Ajouter l'authentification : seule `getCurrentUser()` est à changer — tout le
-   reste passe déjà par un `userId`
+1. **Créer la base sur [Neon](https://neon.tech)** et copier la connection
+   string **poolée** (son hôte contient `-pooler`).
+2. **Importer le dépôt sur Vercel**, puis définir `DATABASE_URL` dans
+   *Settings → Environment Variables* avec cette URL.
+3. **Déployer.** Vercel exécute `vercel-build`, qui joue
+   `prisma migrate deploy` avant `next build` : le schéma est appliqué tout
+   seul à chaque déploiement.
+4. **Amorcer le compte**, une seule fois — une base vide fait échouer
+   `getCurrentUser()` :
+
+   ```bash
+   DATABASE_URL="<url-neon-poolée>" npm run db:seed
+   ```
+
+### Ce qui reste à faire avant une vraie mise en ligne
+
+- **Il n'y a pas d'authentification.** `getCurrentUser()` renvoie le premier
+  compte de la base : sur une URL publique, n'importe quel visiteur voit tes
+  tâches et peut les cocher ou dépenser tes pièces. Tant que ce point n'est pas
+  traité, garder le déploiement privé (protection par mot de passe Vercel).
+- **Le rollover reste paresseux**, déclenché par la première requête du jour.
+  En serverless, deux requêtes concurrentes peuvent entrer ensemble dans
+  `ensureRollover()` et appliquer deux fois malus et XP. Un Vercel Cron
+  quotidien appelant le rollover réglerait les deux problèmes.
