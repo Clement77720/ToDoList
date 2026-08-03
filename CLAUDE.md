@@ -63,10 +63,11 @@ immédiatement, prévois le pendant optimiste, sinon la coche « clignote ».
 
 ### `getCurrentUser()` — la couture de l'authentification
 
-`src/lib/queries.ts:82`. Prend le premier `User` de la base et déclenche
-`ensureRollover()`. Enveloppée dans `cache()` : dédupliquée sur une requête,
-donc le rollover ne tourne qu'une fois. **C'est le seul point à changer le jour
-de l'authentification** — tout le reste travaille déjà à partir d'un `userId`.
+`src/lib/queries.ts`. Prend le premier `User` de la base — en l'amorçant via
+`bootstrapUser()` s'il n'y en a pas — puis déclenche `ensureRollover()`.
+Enveloppée dans `cache()` : dédupliquée sur une requête, donc le rollover ne
+tourne qu'une fois. **C'est le seul point à changer le jour de
+l'authentification** — tout le reste travaille déjà à partir d'un `userId`.
 
 ## Modèle de données
 
@@ -173,8 +174,11 @@ suit tout seul. `DATABASE_URL` se définit dans les variables d'environnement
 Vercel, avec la connection string **poolée** de Neon (hôte en `-pooler`) —
 sans elle, les pools des instances serverless épuisent les connexions.
 
-Une base fraîche est vide, donc `getCurrentUser()` lève. Amorcer une fois :
-`DATABASE_URL="<url-neon>" npm run db:seed`.
+Aucune étape d'amorçage manuel : une base vide se voit créer son compte et les
+valeurs par défaut de `catalog.ts` au premier chargement (`bootstrap.ts`, verrou
+consultatif Postgres pour que des instances concurrentes n'en créent qu'un).
+`npm run db:seed` reste réservé au local — il **efface tout** et rejoue six mois
+d'historique fictif.
 
 Deux chantiers restent ouverts avant une mise en ligne publique :
 

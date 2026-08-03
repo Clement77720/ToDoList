@@ -171,12 +171,16 @@ reçoivent que les DTO plats de `src/lib/types.ts`.
 3. **Déployer.** Vercel exécute `vercel-build`, qui joue
    `prisma migrate deploy` avant `next build` : le schéma est appliqué tout
    seul à chaque déploiement.
-4. **Amorcer le compte**, une seule fois — une base vide fait échouer
-   `getCurrentUser()` :
 
-   ```bash
-   DATABASE_URL="<url-neon-poolée>" npm run db:seed
-   ```
+C'est tout — il n'y a pas d'étape d'amorçage. Au premier chargement, une base
+vide se voit créer son compte, ses cinq catégories, ses routines et sa boutique
+par défaut (`src/lib/bootstrap.ts`). L'opération est protégée par un verrou
+consultatif Postgres : plusieurs instances serverless démarrant en même temps
+ne créent qu'un seul compte.
+
+Le seed (`npm run db:seed`) reste réservé au **local** : il efface tout et
+rejoue six mois d'historique fictif pour explorer l'application. Ce n'est pas
+ce qu'on veut dans une base réelle.
 
 ### Ce qui reste à faire avant une vraie mise en ligne
 

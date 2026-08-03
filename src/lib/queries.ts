@@ -1,6 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { prisma } from "./db";
+import { bootstrapUser } from "./bootstrap";
 import { ensureRollover } from "./rollover";
 import { addDays, isoWeekday, startOfWeek, todayISO } from "./dates";
 import { BADGES, categoryXpToNext } from "./catalog";
@@ -77,15 +78,16 @@ const taskSelect = {
  * compte de la base. Le jour de l'authentification, seule cette fonction
  * change — tout le reste passe déjà par un `userId`.
  *
+ * Une base vide est amorcée à la volée plutôt que de lever : sinon un
+ * déploiement neuf reste en erreur 500 jusqu'à ce qu'on lance le seed
+ * manuellement (cf. `bootstrap.ts`).
+ *
  * `cache()` déduplique l'appel (et donc le rollover) sur une même requête.
  */
 export const getCurrentUser = cache(async () => {
-  const user = await prisma.user.findFirst({ orderBy: { createdAt: "asc" } });
-  if (!user) {
-    throw new Error(
-      "Aucun utilisateur en base. Lance `npm run db:seed` pour initialiser.",
-    );
-  }
+  const found = await prisma.user.findFirst({ orderBy: { createdAt: "asc" } });
+  const user = found ?? (await bootstrapUser());
+
   await ensureRollover(user.id, todayISO());
   return prisma.user.findUniqueOrThrow({ where: { id: user.id } });
 });
