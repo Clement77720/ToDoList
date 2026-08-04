@@ -9,13 +9,49 @@
 
 export type ISODate = string;
 
-/** Date du jour selon l'horloge locale de la machine. */
+/**
+ * Date du jour selon l'horloge locale de la machine.
+ *
+ * Réservé au seed et aux scripts. Côté application, passer par
+ * `todayISOIn()` avec le fuseau du joueur : sur Vercel l'horloge serveur
+ * est en UTC, et la journée d'un joueur français basculerait à 2 h du
+ * matin l'été.
+ */
 export function todayISO(): ISODate {
   const d = new Date();
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/** Fuseau retenu quand celui du compte est inconnu ou invalide. */
+export const DEFAULT_TIMEZONE = "Europe/Paris";
+
+export function isValidTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Date du jour dans un fuseau donné.
+ *
+ * `en-CA` formate en `yyyy-mm-dd`, exactement la forme utilisée partout
+ * ailleurs. Un fuseau invalide ferait lever `Intl` : on retombe sur le
+ * fuseau par défaut plutôt que de casser toute lecture.
+ */
+export function todayISOIn(timeZone: string): ISODate {
+  const zone = isValidTimeZone(timeZone) ? timeZone : DEFAULT_TIMEZONE;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 export function addDays(date: ISODate, n: number): ISODate {

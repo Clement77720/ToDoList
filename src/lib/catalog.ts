@@ -36,7 +36,11 @@ export function categoryXpToNext(level: number): number {
   return Math.round(80 * Math.pow(level, 1.25));
 }
 
-/* ── Routines par défaut ────────────────────────────────────── */
+/* ── Routines par défaut ────────────────────────────────────────
+   Les seules quotidiennes obligatoires. Volontairement deux, et pas
+   plus : chaque ligne ajoutée ici est une dette quotidienne imposée à
+   tout nouveau compte, malus compris. Le reste se crée à la demande.
+   ────────────────────────────────────────────────────────────── */
 export const DEFAULT_ROUTINES: {
   title: string;
   category: CategorySlug;
@@ -46,7 +50,6 @@ export const DEFAULT_ROUTINES: {
 }[] = [
   { title: "Faire du sport", category: "sante", difficulty: "moyenne", days: [1, 2, 3, 4, 5], time: "07:30" },
   { title: "Ne pas grignoter", category: "sante", difficulty: "facile", days: [1, 2, 3, 4, 5] },
-  { title: "Réviser 30 min", category: "travail", difficulty: "moyenne", days: [1, 3, 5], time: "18:00" },
 ];
 
 /* ── Boutique par défaut ────────────────────────────────────── */

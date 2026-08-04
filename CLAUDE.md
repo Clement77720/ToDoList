@@ -4,7 +4,7 @@ Guide de travail pour ce dépôt. Le [README](README.md) explique le *produit* e
 les règles du jeu ; ce fichier décrit comment y toucher sans rien casser.
 
 **QuestList** — to-do list gamifiée. Next.js 16 (App Router) · React 19 ·
-Tailwind 4 · Prisma 7 · PostgreSQL. Mono-utilisateur, pas d'authentification.
+Tailwind 4 · Prisma 7 · PostgreSQL. Multi-utilisateurs (email + mot de passe).
 Interface, commentaires et vocabulaire métier sont **en français** : garder
 cette langue dans tout nouveau code.
 
@@ -40,7 +40,8 @@ imports `@/generated/prisma/client` échouent.
 
 | Règle | Où |
 |---|---|
-| Toutes les mutations sont des Server Actions | `src/app/actions.ts`, un seul fichier |
+| Toutes les mutations sont des Server Actions | `src/app/actions.ts` (métier) et `auth-actions.ts` (comptes) |
+| Les écrans protégés vivent sous `(app)/`, la connexion sous `(auth)/` | la garde est dans le layout, pas dans les pages |
 | Toutes les lectures serveur passent par des DTO plats | `src/lib/queries.ts` → `src/lib/types.ts` |
 | **Aucun objet Prisma ne traverse la frontière serveur/client** | les composants ne reçoivent que des DTO |
 | `db.ts`, `queries.ts`, `rollover.ts` sont marqués `server-only` | ne jamais les importer d'un composant client |
@@ -61,13 +62,29 @@ La mise à jour optimiste vit côté client (`useOptimistic` dans `TodayTasks`,
 `WeekPlanner`, `RoutinesEditor`). Si tu ajoutes une action mutative visible
 immédiatement, prévois le pendant optimiste, sinon la coche « clignote ».
 
-### `getCurrentUser()` — la couture de l'authentification
+### Authentification
 
-`src/lib/queries.ts`. Prend le premier `User` de la base — en l'amorçant via
-`bootstrapUser()` s'il n'y en a pas — puis déclenche `ensureRollover()`.
-Enveloppée dans `cache()` : dédupliquée sur une requête, donc le rollover ne
-tourne qu'une fois. **C'est le seul point à changer le jour de
-l'authentification** — tout le reste travaille déjà à partir d'un `userId`.
+Email + mot de passe, sans dépendance externe :
+
+| Fichier | Rôle |
+|---|---|
+| `src/lib/password.ts` | scrypt (stdlib Node), sel par compte, comparaison en temps constant. **Pas `server-only`** — le seed en a besoin |
+| `src/lib/auth.ts` | sessions : jeton aléatoire de 32 octets en cookie `httpOnly` + `sameSite: lax` |
+| `src/app/auth-actions.ts` | inscription, connexion, déconnexion, profil |
+| `src/lib/bootstrap.ts` | `createUserWithDefaults()` — catégories, routines et boutique à l'inscription |
+
+`getSessionUser()` renvoie le compte connecté ou `null` ; `getCurrentUser()`
+redirige vers `/connexion` s'il n'y en a pas. Les deux vivent dans
+`queries.ts` et déclenchent `ensureRollover()` au passage, dédupliqué par
+`cache()`.
+
+La garde d'accès est **dans `(app)/layout.tsx`**, pas dans chaque page : une
+page ajoutée plus tard est protégée d'office. `(auth)/layout.tsx` fait
+l'inverse et renvoie un visiteur déjà connecté vers l'accueil.
+
+Le message d'échec de connexion est volontairement le même pour un email
+inconnu et un mot de passe faux — les distinguer permettrait d'énumérer les
+comptes.
 
 ## Modèle de données
 
@@ -84,10 +101,30 @@ toutes les lectures pour un gain nul tant que TypeScript valide :
 - Les dates sont des chaînes **`yyyy-mm-dd`**, jamais des `Date`.
 
 `src/lib/dates.ts` fait tous les calculs **en UTC** pour que serveur et client
-tombent d'accord. Seul `todayISO()` lit l'horloge locale : il s'appelle côté
-serveur, et la date descend en props. **Ne jamais recalculer « aujourd'hui »
-dans un composant client** — l'hydratation diverge au premier changement de
-fuseau.
+tombent d'accord. **Ne jamais recalculer « aujourd'hui » dans un composant
+client** — l'hydratation diverge : la date descend en props depuis le serveur.
+
+### Quel « aujourd'hui » ?
+
+Trois fonctions, à ne pas confondre :
+
+| Fonction | Usage |
+|---|---|
+| `getToday()` (`queries.ts`) | **la seule à utiliser côté serveur applicatif** — pages, Server Actions, lectures. Renvoie le jour du compte connecté, mis en cache par requête |
+| `todayISOIn(tz)` (`dates.ts`) | quand on a le fuseau mais pas de session : le cron, qui balaie tous les comptes |
+| `todayISO()` (`dates.ts`) | horloge locale de la machine — **réservé au seed** |
+
+`User.timezone` (IANA, défaut `Europe/Paris`) décide de l'heure à laquelle la
+journée d'un joueur bascule. Sans lui, l'horloge serveur d'un déploiement
+Vercel étant en UTC, la journée d'un joueur français basculait à 2 h du matin
+l'été : les malus du soir tombaient en pleine nuit et le tableau de bord
+affichait la veille. Le fuseau est capté depuis le navigateur à l'inscription
+et modifiable sur `/profil` ; une valeur non reconnue par `Intl` retombe
+silencieusement sur le défaut plutôt que de faire lever toutes les lectures.
+
+La liste des fuseaux du sélecteur est calculée **côté serveur** et descendue en
+props : `Intl.supportedValuesOf` peut différer entre l'ICU de Node et celui du
+navigateur, et une liste d'options différente ferait diverger l'hydratation.
 
 Une hebdomadaire encore en réserve a `date: null` et un `weekStart` renseigné.
 C'est ce qui la distingue d'une hebdomadaire placée.
@@ -103,6 +140,45 @@ Deux garde-fous d'idempotence, **à ne jamais contourner** :
 `User.lastRollover` (un jour n'est clos qu'une fois) et `Task.malusApplied`
 (une tâche n'est débitée qu'une fois). Rattrapage plafonné à
 `MAX_CATCHUP_DAYS = 120` jours.
+
+### Concurrence — la réservation de la journée
+
+`ensureRollover()` **réserve** la journée par compare-and-swap avant de
+travailler : un `updateMany` conditionné sur la valeur de `lastRollover`
+qui vient d'être lue. Postgres ne laisse passer qu'un écrivain ; les autres
+voient `count === 0` et ressortent. Ne pas remplacer ce motif par un
+`update` simple.
+
+Le dégât évité n'est **pas** un double débit d'XP — celle-ci est écrite en
+valeur absolue recalculée depuis le même instantané, donc des exécutions
+concurrentes convergent. C'est `materializeRoutines()` et
+`materializeWeeklyTemplates()` qui sont vulnérables : elles lisent ce qui
+existe puis insèrent ce qui manque. Sans la réservation, 12 rollovers
+concurrents créaient **24 quotidiennes au lieu de 2**.
+
+La journée est marquée traitée *avant* le travail, et rendue si celui-ci
+lève. Mieux vaut sauter un rollover qu'en jouer deux.
+
+La boucle clôt les jours de `today - gap` à **hier inclus**. L'index est
+délicat : une version antérieure itérait `addDays(today, -(gap - i))` sur
+`i` de 1 à `gap` et ne clôturait jamais la veille quand `gap = 1` — soit le
+cas de tous les jours pour qui ouvre l'application quotidiennement. Les
+malus ne tombaient donc qu'après deux jours d'absence. Toute modification
+de cette boucle doit être vérifiée avec `lastRollover = hier`.
+
+### Régime de semaine
+
+`WeekSetting` n'existe **que** pour les semaines mises en vacances : pas de
+ligne = « normale ». Une semaine de vacances ne débite rien et **gèle la
+série** (ni progression, ni rupture, ni joker consommé). Les tâches oubliées
+y sont tout de même marquées `malusApplied` : elles sont *soldées*, donc
+repasser la semaine en « normale » plus tard ne peut pas les débiter
+rétroactivement.
+
+Trois endroits doivent rester d'accord : `closeDay`/`closeWeek`
+(`rollover.ts`), `applyTonightMalusAction` (`actions.ts`) et l'affichage
+(`MalusRisk`, `WeekPlanner`). Les libellés sont dans `gamification.ts` —
+`weeks.ts` est `server-only` et les composants clients en ont besoin.
 
 ## Où changer quoi
 
@@ -174,21 +250,29 @@ suit tout seul. `DATABASE_URL` se définit dans les variables d'environnement
 Vercel, avec la connection string **poolée** de Neon (hôte en `-pooler`) —
 sans elle, les pools des instances serverless épuisent les connexions.
 
-Aucune étape d'amorçage manuel : une base vide se voit créer son compte et les
-valeurs par défaut de `catalog.ts` au premier chargement (`bootstrap.ts`, verrou
-consultatif Postgres pour que des instances concurrentes n'en créent qu'un).
+Aucune étape d'amorçage manuel : chaque inscription crée le compte et ses
+valeurs par défaut issues de `catalog.ts` (`bootstrap.ts`, en une transaction).
 `npm run db:seed` reste réservé au local — il **efface tout** et rejoue six mois
 d'historique fictif.
 
-Deux chantiers restent ouverts avant une mise en ligne publique :
+**Le rollover tourne en cron** : `vercel.json` déclenche
+`GET /api/cron/rollover` tous les jours à 00h15 UTC. La route exige
+`Authorization: Bearer $CRON_SECRET` — Vercel l'envoie automatiquement quand
+la variable est définie — et répond 500 plutôt que de rester ouverte si le
+secret manque. `CRON_SECRET` se définit dans les variables d'environnement
+Vercel, au même endroit que `DATABASE_URL`.
 
-1. **L'authentification.** Sans elle, tout visiteur partage le compte unique.
-   Garder le déploiement protégé par mot de passe en attendant.
-2. **Le rollover en cron.** Il est déclenché par la première requête du jour ;
-   en serverless, deux requêtes concurrentes peuvent entrer ensemble dans
-   `ensureRollover()` — la garde `lastRollover` est lue au début et écrite à la
-   fin — et appliquer deux fois malus et XP. Un Vercel Cron quotidien règle le
-   problème.
+Chaque compte est clos selon **son** fuseau : le cron passe à heure fixe, mais
+« hier » n'est pas le même pour tout le monde. Un passage quotidien tombe donc
+plus ou moins loin du minuit local selon le fuseau — pour un joueur français
+c'est 1 h ou 2 h du matin, soit tout de suite ; pour un fuseau américain
+l'écart atteint une quinzaine d'heures, et c'est le chemin paresseux qui
+rattrape. Passer le cron à l'heure (`0 * * * *`) supprimerait l'écart, mais
+demande un plan Vercel payant.
+
+Le chemin paresseux (`getSessionUser()` → `ensureRollover()`) reste en place :
+il couvre les comptes créés après le passage du cron et le cas où celui-ci
+échoue. Les deux ne peuvent pas se marcher dessus, cf. ci-dessous.
 
 ## Git
 

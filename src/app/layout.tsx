@@ -1,9 +1,5 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Sidebar } from "@/components/Sidebar";
-import { TopBar } from "@/components/TopBar";
-import { ToastProvider } from "@/components/Toaster";
-import { getPlayer } from "@/lib/queries";
 
 export const metadata: Metadata = {
   title: "QuestList — la to-do list gamifiée",
@@ -17,24 +13,15 @@ export const metadata: Metadata = {
  */
 export const dynamic = "force-dynamic";
 
-export default async function RootLayout({
+/** Racine minimale : la coquille applicative vit dans `(app)/layout.tsx`,
+ *  pour que la connexion et l'inscription n'héritent ni de la barre
+ *  latérale ni de la lecture du joueur — qui exigerait d'être connecté. */
+export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const player = await getPlayer();
-
   return (
     <html lang="fr">
-      <body className="min-h-dvh">
-        <ToastProvider>
-          <div className="relative z-10 flex">
-            <Sidebar player={player} />
-            <div className="min-w-0 flex-1">
-              <TopBar player={player} />
-              <main className="px-5 py-6 lg:px-8">{children}</main>
-            </div>
-          </div>
-        </ToastProvider>
-      </body>
+      <body className="min-h-dvh">{children}</body>
     </html>
   );
 }

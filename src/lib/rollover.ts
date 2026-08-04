@@ -11,6 +11,7 @@ import {
   xpToNextLevel,
 } from "./gamification";
 import type { TaskKind } from "./gamification";
+import { vacationWeekStarts } from "./weeks";
 
 /**
  * Le « job de minuit ».
@@ -30,29 +31,97 @@ export async function ensureRollover(userId: string, today: string) {
   if (!user) return;
   if (user.lastRollover === today) return; // déjà à jour
 
-  const from = user.lastRollover ?? addDays(today, -1);
+  const previous = user.lastRollover;
+
+  /*
+   * Réservation atomique de la journée.
+   *
+   * Lire `lastRollover` puis l'écrire à la fin laissait une fenêtre : en
+   * serverless, plusieurs instances (ou une requête et le cron) entraient
+   * ensemble. Le dégât n'est pas sur l'XP — écrite en valeur absolue
+   * recalculée depuis le même instantané, elle converge — mais sur
+   * `materializeRoutines` et `materializeWeeklyTemplates`, qui lisent ce
+   * qui existe puis insèrent ce qui manque : chacune lit « rien » et
+   * insère. Mesuré à 12 rollovers concurrents : 24 quotidiennes créées au
+   * lieu de 2.
+   *
+   * Ce `updateMany` conditionné sur la valeur lue est un compare-and-swap :
+   * Postgres ne laisse passer qu'un seul écrivain, les autres voient
+   * `count === 0` et ressortent sans rien faire.
+   *
+   * On marque donc la journée traitée *avant* de travailler. C'est
+   * volontaire : mieux vaut sauter un rollover en cas d'incident que le
+   * jouer deux fois.
+   */
+  const claim = await prisma.user.updateMany({
+    where: { id: userId, lastRollover: previous },
+    data: { lastRollover: today },
+  });
+  if (claim.count === 0) return; // un autre processus s'en charge
+
+  try {
+    await runRollover(user, today, previous);
+  } catch (error) {
+    // Rendre la réservation pour que la prochaine tentative reprenne le
+    // travail, plutôt que de laisser une journée définitivement sautée.
+    await prisma.user.updateMany({
+      where: { id: userId, lastRollover: today },
+      data: { lastRollover: previous },
+    });
+    throw error;
+  }
+}
+
+async function runRollover(
+  user: { id: string; level: number; xp: number; streak: number; bestStreak: number; shields: number },
+  today: string,
+  previous: string | null,
+) {
+  const userId = user.id;
+  const from = previous ?? addDays(today, -1);
   const gap = Math.min(daysBetween(from, today), MAX_CATCHUP_DAYS);
 
   let { level, xp, streak, bestStreak, shields } = user;
 
-  for (let i = 1; i <= gap; i++) {
-    const date = addDays(today, -(gap - i));
+  const vacations = await vacationWeekStarts(userId);
+
+  // Jours à clore : de `today - gap` jusqu'à hier inclus.
+  //
+  // L'ancienne formule `addDays(today, -(gap - i))` sur `i` de 1 à gap
+  // décalait d'un jour : avec gap = 1 — le cas de loin le plus courant,
+  // celui où l'on ouvre l'application tous les jours — elle produisait
+  // `today`, sortait aussitôt, et ne clôturait donc jamais la veille. Ni
+  // DayRecord, ni malus, ni série : les pénalités ne tombaient qu'après
+  // une absence d'au moins deux jours.
+  //
+  // Partir de `today - gap` conserve le plafonnement : lors d'un long
+  // retour de vacances, on rattrape les MAX_CATCHUP_DAYS jours les plus
+  // récents, pas les plus anciens.
+  const first = addDays(today, -gap);
+
+  for (let i = 0; i < gap; i++) {
+    const date = addDays(first, i);
     if (date >= today) break;
 
-    const closed = await closeDay(userId, date);
+    const onVacation = vacations.has(startOfWeek(date));
+    const closed = await closeDay(userId, date, onVacation);
 
     // Malus de fin de semaine : les hebdomadaires non faites tombent
     // le dimanche soir, jamais avant — elles restent déplaçables.
     let malus = closed.malus;
     if (isoWeekday(date) === 7) {
-      malus += await closeWeek(userId, startOfWeek(date));
+      malus += await closeWeek(userId, startOfWeek(date), onVacation);
     }
 
     // Série : un joker absorbe une journée ratée avant de la casser.
+    // En vacances elle est gelée — ni progression, ni rupture, ni joker
+    // consommé : c'est la contrepartie de l'absence de malus.
     if (closed.success) {
       streak += 1;
       bestStreak = Math.max(bestStreak, streak);
       if (streak % 7 === 0) shields = Math.min(MAX_STREAK_SHIELDS, shields + 1);
+    } else if (onVacation) {
+      // rien
     } else if (shields > 0) {
       shields -= 1;
     } else {
@@ -65,6 +134,7 @@ export async function ensureRollover(userId: string, today: string) {
   }
 
   await materializeRoutines(userId, today);
+  await materializeWeeklyTemplates(userId, startOfWeek(today));
 
   await prisma.user.update({
     where: { id: userId },
@@ -72,8 +142,14 @@ export async function ensureRollover(userId: string, today: string) {
   });
 }
 
-/** Écrit le bilan d'une journée et débite ses quotidiennes oubliées. */
-async function closeDay(userId: string, date: string) {
+/**
+ * Écrit le bilan d'une journée et débite ses quotidiennes oubliées.
+ *
+ * En semaine de vacances, les oubliées sont marquées `malusApplied` sans
+ * rien débiter : elles sont *soldées*. Repasser la semaine en « normale »
+ * plus tard ne peut donc pas les débiter rétroactivement.
+ */
+async function closeDay(userId: string, date: string, onVacation: boolean) {
   const tasks = await prisma.task.findMany({ where: { userId, date } });
 
   const done = tasks.filter((t) => t.done);
@@ -86,10 +162,9 @@ async function closeDay(userId: string, date: string) {
   const missedDaily = tasks.filter(
     (t) => t.kind === "quotidienne" && !t.done && !t.malusApplied,
   );
-  const malus = Math.min(
-    missedDaily.length * MALUS.quotidienne,
-    DAILY_MALUS_CAP,
-  );
+  const malus = onVacation
+    ? 0
+    : Math.min(missedDaily.length * MALUS.quotidienne, DAILY_MALUS_CAP);
 
   if (missedDaily.length > 0) {
     await prisma.task.updateMany({
@@ -121,7 +196,11 @@ async function closeDay(userId: string, date: string) {
 }
 
 /** Débite les hebdomadaires non faites d'une semaine révolue. */
-async function closeWeek(userId: string, weekStart: string): Promise<number> {
+async function closeWeek(
+  userId: string,
+  weekStart: string,
+  onVacation: boolean,
+): Promise<number> {
   const pending = await prisma.task.findMany({
     where: {
       userId,
@@ -133,11 +212,13 @@ async function closeWeek(userId: string, weekStart: string): Promise<number> {
   });
   if (pending.length === 0) return 0;
 
+  // Marquées soldées dans les deux cas — voir `closeDay`.
   await prisma.task.updateMany({
     where: { id: { in: pending.map((t) => t.id) } },
     data: { malusApplied: true },
   });
 
+  if (onVacation) return 0;
   return Math.min(pending.length * MALUS.hebdomadaire, DAILY_MALUS_CAP);
 }
 
@@ -172,6 +253,45 @@ export async function materializeRoutines(userId: string, date: string) {
       kind: "quotidienne",
       date,
       time: r.time,
+    })),
+  });
+}
+
+/**
+ * Crée les hebdomadaires de la semaine à partir des engagements récurrents.
+ *
+ * Même logique que `materializeRoutines`, à la maille de la semaine : on ne
+ * crée que ce qui manque, en s'appuyant sur `templateId` pour reconnaître ce
+ * qui existe déjà. Rejouable sans risque de doublon.
+ */
+export async function materializeWeeklyTemplates(
+  userId: string,
+  weekStart: string,
+) {
+  const templates = await prisma.weeklyTemplate.findMany({
+    where: { userId, active: true },
+  });
+  if (templates.length === 0) return;
+
+  const existing = await prisma.task.findMany({
+    where: { userId, weekStart, templateId: { in: templates.map((t) => t.id) } },
+    select: { templateId: true },
+  });
+  const already = new Set(existing.map((t) => t.templateId));
+
+  const missing = templates.filter((t) => !already.has(t.id));
+  if (missing.length === 0) return;
+
+  await prisma.task.createMany({
+    data: missing.map((t) => ({
+      userId,
+      categoryId: t.categoryId,
+      templateId: t.id,
+      title: t.title,
+      difficulty: t.difficulty,
+      kind: "hebdomadaire",
+      weekStart,
+      date: null,
     })),
   });
 }

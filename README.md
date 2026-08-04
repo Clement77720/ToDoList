@@ -2,8 +2,8 @@
 
 Application Next.js 16 + React 19 + Tailwind 4, avec persistance **Prisma +
 PostgreSQL**. Tout est écrit en base : cocher une tâche, la déplacer, encaisser
-un malus, acheter une récompense. Pas encore d'authentification — un seul
-compte, créé par le seed.
+un malus, acheter une récompense. Chacun son compte : inscription par email et
+mot de passe, photo de profil et page de profil.
 
 ## Démarrer
 
@@ -44,23 +44,25 @@ il y a cinq semaines, puis la remontée en cours. Les dates sont relatives à
 | `npm run db:deploy` | applique les migrations sans toucher aux données |
 | `npm run db:studio` | ouvre Prisma Studio sur la base |
 
-## Les 6 écrans
+## Les écrans
 
 | Route | Contenu |
 |---|---|
+| `/connexion` · `/inscription` | Comptes — email et mot de passe |
 | `/` | Tableau de bord — tâches du jour, **risque de malus**, quêtes, niveaux par catégorie, badges, heatmap |
 | `/semaine` | **Planificateur hebdo** : réserve à placer, 7 colonnes, quota de créneaux, éditeur de routines |
 | `/calendrier` | Vue mois navigable, remplissage par taux de complétion, malus encaissés, détail du jour |
 | `/badges` | Galerie 31 badges, filtres par famille, verrouillés visibles avec progression |
 | `/boutique` | Pièces → récompenses **réelles** définies par l'utilisateur, + cosmétiques |
 | `/stats` | Radar d'équilibre, XP nette par semaine, assiduité, **et le barème complet en clair** |
+| `/profil` | Photo, surnom, **fuseau horaire**, grade, progression et niveaux par catégorie |
 
 ## Les trois types de tâche
 
 | Type | Comportement | Malus si non faite |
 |---|---|---|
 | 🔁 **Quotidienne** | Routine récurrente, revient automatiquement les jours cochés (lun→ven par défaut) | **−15 XP** le soir même |
-| 📅 **Hebdomadaire** | Engagement de la semaine, placé librement sur un jour, déplaçable à volonté | **−25 XP**, mais dimanche soir seulement |
+| 📅 **Hebdomadaire** | Engagement de la semaine, placé librement sur un jour (glisser-déposer), déplaçable à volonté | **−25 XP**, mais dimanche soir seulement |
 | ✨ **Bonus** | Tout le reste | **aucun** — une tâche optionnelle qui punit n'est plus optionnelle |
 
 Quotidiennes et hebdomadaires sont des **engagements** : elles partagent le
@@ -79,6 +81,9 @@ optimiste côté client (`useOptimistic`) pour que la coche soit instantanée.
 - Acheter une récompense (débite les pièces ; les cosmétiques restent acquis,
   les récompenses réelles se reconsomment)
 - Débiter le malus du soir sans attendre minuit
+- Basculer une semaine entre **normale** et **vacances**
+- Modifier un engagement encore en réserve (jamais le supprimer)
+- Poser un engagement **récurrent**, qui revient en réserve chaque semaine
 
 ## Le job de minuit
 
@@ -87,12 +92,17 @@ débite les quotidiennes oubliées, applique le malus hebdomadaire le dimanche,
 fait avancer la série (en consommant un joker si besoin) et matérialise les
 tâches du jour à partir des routines.
 
-En production ce serait un cron. Ici l'application est locale et
-mono-utilisateur : le rollover est **rattrapé paresseusement** au premier
-chargement de la journée, via `getCurrentUser()`. L'opération est idempotente —
-`lastRollover` empêche de clore un jour deux fois, `malusApplied` de débiter une
-tâche deux fois. Une absence de plusieurs semaines est rattrapée jour par jour
-(plafonnée à 120 journées).
+Il tourne en **cron quotidien** sur Vercel (`vercel.json` → 00h15 UTC), et
+reste rattrapé paresseusement au premier chargement de page pour les comptes
+créés entre deux passages. Chaque compte est clos selon **son** fuseau horaire :
+le cron passe à heure fixe, mais « hier » n'est pas le même partout.
+
+L'opération est idempotente — `lastRollover` empêche de clore un jour deux
+fois, `malusApplied` de débiter une tâche deux fois — et la journée est
+**réservée par compare-and-swap** avant tout travail, pour que deux instances
+serverless entrées ensemble ne matérialisent pas les tâches en double. Une
+absence de plusieurs semaines est rattrapée jour par jour (plafonnée à 120
+journées).
 
 ## Les règles du jeu
 
@@ -142,8 +152,8 @@ séparation sous daltonisme protan/deutan, contraste sur la surface sombre).
 
 ```
 prisma/
-  schema.prisma     User · Category · Routine · Task · DayRecord ·
-                    UnlockedBadge · Reward
+  schema.prisma     User · Session · Category · Routine · Task · DayRecord ·
+                    UnlockedBadge · Reward · WeekSetting · WeeklyTemplate
   seed.ts           six mois d'historique déterministe
 src/
   app/
@@ -151,11 +161,13 @@ src/
     */page.tsx      un écran par route, composants serveur
   components/       UI + graphiques (radar, heatmap, barres) faits main
   lib/
+    auth.ts         sessions en cookie httpOnly
+    password.ts     scrypt — hors `server-only`, le seed s'en sert
     gamification.ts barèmes et formules — la source de vérité des règles
     catalog.ts      catalogue statique : badges, catégories et routines par défaut
     queries.ts      lectures serveur, typées en DTO
     rollover.ts     le job de minuit
-    dates.ts        helpers yyyy-mm-dd, tout en UTC
+    dates.ts        helpers yyyy-mm-dd, tout en UTC + jour selon fuseau
     db.ts           client Prisma (singleton, adaptateur node-postgres)
 ```
 
@@ -168,27 +180,24 @@ reçoivent que les DTO plats de `src/lib/types.ts`.
    string **poolée** (son hôte contient `-pooler`).
 2. **Importer le dépôt sur Vercel**, puis définir `DATABASE_URL` dans
    *Settings → Environment Variables* avec cette URL.
-3. **Déployer.** Vercel exécute `vercel-build`, qui joue
+3. **Définir `CRON_SECRET`** dans les mêmes variables d'environnement
+   (`openssl rand -base64 32`). Elle protège `/api/cron/rollover`, qui écrit
+   en base ; Vercel l'envoie automatiquement en `Authorization: Bearer` sur
+   les requêtes de cron, et la route refuse tout le reste.
+4. **Déployer.** Vercel exécute `vercel-build`, qui joue
    `prisma migrate deploy` avant `next build` : le schéma est appliqué tout
    seul à chaque déploiement.
 
-C'est tout — il n'y a pas d'étape d'amorçage. Au premier chargement, une base
-vide se voit créer son compte, ses cinq catégories, ses routines et sa boutique
-par défaut (`src/lib/bootstrap.ts`). L'opération est protégée par un verrou
-consultatif Postgres : plusieurs instances serverless démarrant en même temps
-ne créent qu'un seul compte.
+C'est tout — il n'y a pas d'étape d'amorçage. Chaque inscription crée le compte
+avec ses cinq catégories, ses routines obligatoires et sa boutique par défaut
+(`src/lib/bootstrap.ts`), en une seule transaction.
 
 Le seed (`npm run db:seed`) reste réservé au **local** : il efface tout et
-rejoue six mois d'historique fictif pour explorer l'application. Ce n'est pas
-ce qu'on veut dans une base réelle.
+rejoue six mois d'historique fictif pour explorer l'application (compte
+`demo@questlist.local`, mot de passe `questlist`). Ce n'est pas ce qu'on veut
+dans une base réelle.
 
-### Ce qui reste à faire avant une vraie mise en ligne
+### Ce qui reste à faire
 
-- **Il n'y a pas d'authentification.** `getCurrentUser()` renvoie le premier
-  compte de la base : sur une URL publique, n'importe quel visiteur voit tes
-  tâches et peut les cocher ou dépenser tes pièces. Tant que ce point n'est pas
-  traité, garder le déploiement privé (protection par mot de passe Vercel).
-- **Le rollover reste paresseux**, déclenché par la première requête du jour.
-  En serverless, deux requêtes concurrentes peuvent entrer ensemble dans
-  `ensureRollover()` et appliquer deux fois malus et XP. Un Vercel Cron
-  quotidien appelant le rollover réglerait les deux problèmes.
+- **Pas de réinitialisation de mot de passe** : il faudrait un service d'envoi
+  d'emails.

@@ -59,6 +59,48 @@ export function PageHeader({
   );
 }
 
+/**
+ * Photo de profil, avec repli sur l'emoji quand il n'y en a pas.
+ *
+ * `<img>` brut et non `next/image` : la source est un data URI déjà
+ * redimensionné, il n'y a donc rien à optimiser ni à servir depuis un CDN.
+ */
+export function Avatar({
+  photo,
+  emoji,
+  size = 36,
+  className = "",
+}: {
+  photo: string | null;
+  emoji: string;
+  size?: number;
+  className?: string;
+}) {
+  const base = `shrink-0 overflow-hidden rounded-full ring-2 ring-violet/40 ${className}`;
+
+  if (photo) {
+    return (
+      <img
+        src={photo}
+        alt=""
+        width={size}
+        height={size}
+        className={`${base} object-cover`}
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+  return (
+    <span
+      aria-hidden
+      className={`${base} grid place-items-center bg-panel-3`}
+      style={{ width: size, height: size, fontSize: size * 0.5 }}
+    >
+      {emoji}
+    </span>
+  );
+}
+
 /** Pastille de catégorie : point coloré + libellé en encre neutre. */
 export function CategoryChip({
   color,

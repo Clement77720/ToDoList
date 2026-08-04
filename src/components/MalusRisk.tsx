@@ -9,6 +9,7 @@ import {
   MALUS,
   tonightMalus,
   weekEndMalus,
+  type WeekKind,
 } from "@/lib/gamification";
 import type { TaskDTO } from "@/lib/types";
 import { useToaster } from "./Toaster";
@@ -17,20 +18,25 @@ import { Card, CardTitle, ProgressBar } from "./ui";
 export function MalusRisk({
   todayTasks,
   weeklyPending,
+  weekKind,
 }: {
   todayTasks: TaskDTO[];
   /** Hebdomadaires de la semaine encore ouvertes. */
   weeklyPending: TaskDTO[];
+  weekKind: WeekKind;
 }) {
   const { report } = useToaster();
   const [pending, startTransition] = useTransition();
 
+  const onVacation = weekKind === "vacances";
   const pendingDaily = todayTasks.filter(
     (t) => t.kind === "quotidienne" && !t.done,
   );
-  const tonight = tonightMalus(todayTasks);
+  // En vacances, plus rien n'est en jeu : on affiche zéro plutôt que de
+  // laisser une menace chiffrée que le serveur n'appliquera jamais.
+  const tonight = onVacation ? 0 : tonightMalus(todayTasks);
   const unplaced = weeklyPending.filter((w) => !w.date);
-  const weekEnd = weekEndMalus(weeklyPending);
+  const weekEnd = onVacation ? 0 : weekEndMalus(weeklyPending);
   const clean = tonight === 0;
 
   const apply = () =>
@@ -38,7 +44,9 @@ export function MalusRisk({
 
   return (
     <Card className={clean ? "border-cat-sante/30" : "border-fire/35"}>
-      <CardTitle right="à minuit">Risque de malus</CardTitle>
+      <CardTitle right={onVacation ? "🌴 vacances" : "à minuit"}>
+        Risque de malus
+      </CardTitle>
 
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sm text-ink-2">Ce soir</span>

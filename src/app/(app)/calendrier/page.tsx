@@ -6,8 +6,9 @@ import {
   getPlannedCounts,
   getPlayer,
   getTasksForDate,
+  getToday,
 } from "@/lib/queries";
-import { addDays, todayISO } from "@/lib/dates";
+import { addDays } from "@/lib/dates";
 
 export const metadata = { title: "Calendrier — QuestList" };
 
@@ -17,7 +18,7 @@ export default async function CalendrierPage({
   searchParams: Promise<{ m?: string; d?: string }>;
 }) {
   const { m, d } = await searchParams;
-  const today = todayISO();
+  const today = await getToday();
 
   const selected = d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : today;
   const match = m?.match(/^(\d{4})-(\d{2})$/);

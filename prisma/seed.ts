@@ -19,6 +19,11 @@ import {
   type TaskKind,
 } from "../src/lib/gamification";
 import { addDays, isoWeekday, startOfWeek, todayISO } from "../src/lib/dates";
+import { hashPassword } from "../src/lib/password";
+
+/** Identifiants du compte de démonstration créé par le seed. */
+const DEMO_EMAIL = "demo@questlist.local";
+const DEMO_PASSWORD = "questlist";
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: requireDatabaseUrl() }),
@@ -95,8 +100,18 @@ async function main() {
   console.log(`→ Réinitialisation de la base (aujourd'hui : ${today})`);
   await prisma.user.deleteMany(); // les cascades nettoient tout le reste
 
+  // Compte de démonstration. Le hash est calculé ici plutôt que codé en
+  // dur pour que le sel reste aléatoire à chaque seed.
   const user = await prisma.user.create({
-    data: { name: "Clément", avatar: "🦊", level: 1, xp: 0, coins: 0 },
+    data: {
+      email: DEMO_EMAIL,
+      passwordHash: await hashPassword(DEMO_PASSWORD),
+      name: "Clément",
+      avatar: "🦊",
+      level: 1,
+      xp: 0,
+      coins: 0,
+    },
   });
 
   // ── Catégories ────────────────────────────────────────────────
@@ -408,6 +423,7 @@ async function main() {
   console.log(
     `✓ ${tasks.length} tâches · ${dayRecords.length} journées · niveau ${level} · série ${streak} j · ${unlocked.length} badges`,
   );
+  console.log(`✓ connexion : ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
 }
 
 main()

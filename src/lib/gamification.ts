@@ -51,6 +51,29 @@ export const TASK_KINDS: Record<
 /** Une tâche « engageante » compte dans le quota du jour. */
 export const isEngagement = (kind: TaskKind) => kind !== "bonus";
 
+/* ── Régime de semaine ──────────────────────────────────────────
+   Une semaine de vacances n'inflige aucun malus et gèle la série :
+   sans ce gel, partir en congés coûterait le multiplicateur accumulé,
+   ce qui reviendrait à punir les vacances qu'on vient d'autoriser.
+   ────────────────────────────────────────────────────────────── */
+export type WeekKind = "normale" | "vacances";
+
+export const WEEK_KINDS: Record<
+  WeekKind,
+  { label: string; icon: string; hint: string }
+> = {
+  normale: {
+    label: "Normale",
+    icon: "⚔️",
+    hint: "Les engagements non tenus coûtent de l'XP.",
+  },
+  vacances: {
+    label: "Vacances",
+    icon: "🌴",
+    hint: "Aucun malus, et la série reste figée.",
+  },
+};
+
 /** Bonus appliqué si la tâche est terminée le jour prévu. */
 export const PUNCTUALITY_BONUS = 0.2;
 

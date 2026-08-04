@@ -2,16 +2,18 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
-import { getCurrentUser, grantEarnedBadges } from "@/lib/queries";
+import { getCurrentUser, getToday, grantEarnedBadges } from "@/lib/queries";
 import { applyXpDelta, materializeRoutines } from "@/lib/rollover";
 import { categoryXpToNext } from "@/lib/catalog";
-import { isoWeekday, todayISO } from "@/lib/dates";
+import { isoWeekday, startOfWeek } from "@/lib/dates";
+import { getWeekKind } from "@/lib/weeks";
 import {
   DAILY_MALUS_CAP,
   MALUS,
   MAX_ENGAGEMENTS_PER_DAY,
   taskReward,
   type DifficultyKey,
+  type WeekKind,
 } from "@/lib/gamification";
 
 export type ActionResult =
@@ -59,7 +61,7 @@ export async function toggleTaskAction(taskId: string): Promise<ActionResult> {
   });
   if (!task) return { ok: false, error: "Tâche introuvable." };
 
-  const today = todayISO();
+  const today = await getToday();
   const reward = taskReward(task.difficulty as DifficultyKey, {
     onTime: task.date === today,
     streakDays: user.streak,
@@ -107,7 +109,7 @@ export async function placeWeeklyAction(
   if (!task) return { ok: false, error: "Engagement introuvable." };
 
   if (date) {
-    if (date < todayISO()) {
+    if (date < (await getToday())) {
       return { ok: false, error: "Impossible de planifier dans le passé." };
     }
     // Le quota du jour couvre quotidiennes ET hebdomadaires. Les
@@ -173,7 +175,7 @@ export async function toggleRoutineDayAction(
   });
 
   // Répercuter sur aujourd'hui : on ne touche jamais au passé.
-  const today = todayISO();
+  const today = await getToday();
   if (dow === isoWeekday(today)) {
     if (active) {
       await prisma.task.deleteMany({
@@ -188,12 +190,19 @@ export async function toggleRoutineDayAction(
   return { ok: true };
 }
 
-/** Crée un engagement hebdomadaire dans la réserve d'une semaine. */
+/**
+ * Crée un engagement hebdomadaire dans la réserve d'une semaine.
+ *
+ * `recurring` en fait un engagement permanent : un `WeeklyTemplate` est
+ * posé en plus de la tâche, et chaque nouvelle semaine le rematérialisera
+ * en réserve — plus besoin de le recréer à la main.
+ */
 export async function addWeeklyTaskAction(
   weekStart: string,
   title: string,
   categorySlug: string,
   difficulty: DifficultyKey,
+  recurring = false,
 ): Promise<ActionResult> {
   const user = await getCurrentUser();
   if (!title.trim()) return { ok: false, error: "Le titre est vide." };
@@ -202,6 +211,21 @@ export async function addWeeklyTaskAction(
     where: { userId_slug: { userId: user.id, slug: categorySlug } },
   });
   if (!category) return { ok: false, error: "Catégorie inconnue." };
+
+  let templateId: string | null = null;
+  if (recurring) {
+    const count = await prisma.weeklyTemplate.count({ where: { userId: user.id } });
+    const template = await prisma.weeklyTemplate.create({
+      data: {
+        userId: user.id,
+        categoryId: category.id,
+        title: title.trim(),
+        difficulty,
+        order: count,
+      },
+    });
+    templateId = template.id;
+  }
 
   await prisma.task.create({
     data: {
@@ -212,6 +236,7 @@ export async function addWeeklyTaskAction(
       kind: "hebdomadaire",
       weekStart,
       date: null,
+      templateId,
     },
   });
   refresh();
@@ -243,6 +268,80 @@ export async function addBonusTaskAction(
       date,
     },
   });
+  refresh();
+  return { ok: true };
+}
+
+/** Bascule une semaine entre régime normal et vacances. */
+export async function setWeekKindAction(
+  weekStart: string,
+  kind: WeekKind,
+): Promise<ActionResult> {
+  const user = await getCurrentUser();
+
+  if (kind === "normale") {
+    // L'absence de ligne vaut « normale » : on nettoie plutôt que d'écrire.
+    await prisma.weekSetting.deleteMany({ where: { userId: user.id, weekStart } });
+  } else {
+    await prisma.weekSetting.upsert({
+      where: { userId_weekStart: { userId: user.id, weekStart } },
+      create: { userId: user.id, weekStart, kind },
+      update: { kind },
+    });
+  }
+
+  refresh();
+  return { ok: true };
+}
+
+/**
+ * Modifie un engagement hebdomadaire encore en réserve.
+ *
+ * On peut corriger un intitulé, une catégorie ou une difficulté, mais pas
+ * supprimer l'engagement : s'en débarrasser d'un clic viderait le format de
+ * son sens. Une fois la tâche validée, elle n'est plus modifiable non plus —
+ * sinon on pourrait la requalifier après coup pour changer son gain.
+ */
+export async function updateWeeklyTaskAction(
+  taskId: string,
+  title: string,
+  categorySlug: string,
+  difficulty: DifficultyKey,
+): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!title.trim()) return { ok: false, error: "Le titre est vide." };
+
+  const task = await prisma.task.findFirst({
+    where: { id: taskId, userId: user.id, kind: "hebdomadaire" },
+  });
+  if (!task) return { ok: false, error: "Engagement introuvable." };
+  if (task.done) return { ok: false, error: "Déjà validé — plus modifiable." };
+
+  const category = await prisma.category.findUnique({
+    where: { userId_slug: { userId: user.id, slug: categorySlug } },
+  });
+  if (!category) return { ok: false, error: "Catégorie inconnue." };
+
+  await prisma.task.update({
+    where: { id: task.id },
+    data: { title: title.trim(), categoryId: category.id, difficulty },
+  });
+
+  refresh();
+  return { ok: true };
+}
+
+/** Retire un engagement récurrent : il cessera de revenir en réserve. */
+export async function deactivateTemplateAction(
+  templateId: string,
+): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  const updated = await prisma.weeklyTemplate.updateMany({
+    where: { id: templateId, userId: user.id },
+    data: { active: false },
+  });
+  if (updated.count === 0) return { ok: false, error: "Engagement introuvable." };
+
   refresh();
   return { ok: true };
 }
@@ -293,7 +392,11 @@ export async function buyRewardAction(
  */
 export async function applyTonightMalusAction(): Promise<ActionResult> {
   const user = await getCurrentUser();
-  const today = todayISO();
+  const today = await getToday();
+
+  if ((await getWeekKind(user.id, startOfWeek(today))) === "vacances") {
+    return { ok: false, error: "Semaine de vacances : aucun malus." };
+  }
 
   const missed = await prisma.task.findMany({
     where: {

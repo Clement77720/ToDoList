@@ -48,7 +48,12 @@ export type CategoryDTO = CategoryRef & {
 export type PlayerDTO = {
   id: string;
   name: string;
+  email: string;
   avatar: string;
+  /** Data URI, ou null si le joueur s'en tient à son emoji. */
+  photo: string | null;
+  /** Fuseau IANA — décide de l'heure à laquelle sa journée bascule. */
+  timezone: string;
   level: number;
   xp: number;
   xpMax: number;

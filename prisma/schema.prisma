@@ -16,27 +16,58 @@ datasource db {
 }
 
 model User {
-  id         String  @id @default(cuid())
-  name       String
-  avatar     String  @default("🦊")
-  level      Int     @default(1)
-  xp         Int     @default(0)
-  coins      Int     @default(0)
-  streak     Int     @default(0)
-  bestStreak Int     @default(0)
-  shields    Int     @default(0)
+  id String @id @default(cuid())
+
+  /// Identifiant de connexion, normalisé en minuscules.
+  email String @unique
+  /// scrypt — voir src/lib/auth.ts. Jamais exposé dans un DTO.
+  passwordHash String
+
+  /// Surnom affiché partout dans l'interface.
+  name   String
+  avatar String @default("🦊")
+  /// Photo de profil en data URI, redimensionnée côté navigateur.
+  /// Null = on retombe sur l'emoji `avatar`.
+  photo String?
+
+  level      Int @default(1)
+  xp         Int @default(0)
+  coins      Int @default(0)
+  streak     Int @default(0)
+  bestStreak Int @default(0)
+  shields    Int @default(0)
+
+  /// Fuseau IANA du joueur. Décide de l'heure à laquelle *sa* journée
+  /// bascule : l'horloge du serveur est en UTC sur Vercel.
+  timezone String @default("Europe/Paris")
 
   /// Dernière date (yyyy-mm-dd) traitée par le job de minuit.
   lastRollover String?
 
   createdAt DateTime @default(now())
 
+  sessions   Session[]
   categories Category[]
   routines   Routine[]
   tasks      Task[]
   days       DayRecord[]
   badges     UnlockedBadge[]
   rewards    Reward[]
+  weeks      WeekSetting[]
+  templates  WeeklyTemplate[]
+}
+
+/// Session de connexion. L'`id` est le jeton opaque déposé en cookie.
+model Session {
+  id     String @id
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model Category {
@@ -53,8 +84,9 @@ model Category {
   level Int    @default(1)
   xp    Int    @default(0)
 
-  routines Routine[]
-  tasks    Task[]
+  routines  Routine[]
+  tasks     Task[]
+  templates WeeklyTemplate[]
 
   @@unique([userId, slug])
 }
@@ -88,6 +120,10 @@ model Task {
   /// Renseigné pour les quotidiennes issues d'une routine.
   routineId String?
   routine   Routine? @relation(fields: [routineId], references: [id], onDelete: SetNull)
+
+  /// Renseigné pour les hebdomadaires issues d'un engagement récurrent.
+  templateId String?
+  template   WeeklyTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
   title      String
   difficulty String
@@ -140,6 +176,38 @@ model UnlockedBadge {
   unlockedAt DateTime @default(now())
 
   @@unique([userId, badgeId])
+}
+
+/// Régime d'une semaine. Absent = « normale » : on ne stocke une ligne
+/// que pour les semaines explicitement mises en vacances.
+model WeekSetting {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Lundi de la semaine (yyyy-mm-dd).
+  weekStart String
+  /// normale | vacances
+  kind String
+
+  @@unique([userId, weekStart])
+}
+
+/// Engagement hebdomadaire récurrent : réapparaît en réserve chaque
+/// semaine, comme une Routine le fait chaque jour.
+model WeeklyTemplate {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  title      String
+  difficulty String
+  active     Boolean @default(true)
+  order      Int     @default(0)
+
+  tasks Task[]
 }
 
 /// Récompenses de la boutique — définies par l'utilisateur.
