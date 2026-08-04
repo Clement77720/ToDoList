@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "./db";
 import { getSessionUserId } from "./auth";
 import { ensureRollover, materializeWeeklyTemplates } from "./rollover";
-import { addDays, isoWeekday, startOfWeek, todayISO } from "./dates";
+import { addDays, isoWeekday, startOfWeek, todayISOIn } from "./dates";
 import { BADGES, categoryXpToNext } from "./catalog";
 import {
   DIFFICULTIES,
@@ -88,8 +88,21 @@ export const getSessionUser = cache(async () => {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) return null; // session orpheline (compte supprimé)
 
-  await ensureRollover(user.id, todayISO());
+  await ensureRollover(user.id, todayISOIn(user.timezone));
   return prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+});
+
+/**
+ * « Aujourd'hui » du joueur connecté.
+ *
+ * **Toujours passer par ici côté serveur**, jamais par `todayISO()` : sur
+ * Vercel l'horloge est en UTC, et la journée d'un joueur français
+ * basculerait à 2 h du matin l'été — les malus du soir tomberaient en
+ * pleine nuit et le tableau de bord afficherait la veille.
+ */
+export const getToday = cache(async (): Promise<string> => {
+  const user = await getCurrentUser();
+  return todayISOIn(user.timezone);
 });
 
 /**
@@ -111,6 +124,7 @@ export const getPlayer = cache(async (): Promise<PlayerDTO> => {
     email: u.email,
     avatar: u.avatar,
     photo: u.photo,
+    timezone: u.timezone,
     level: u.level,
     xp: u.xp,
     xpMax: xpToNextLevel(u.level),
@@ -173,7 +187,7 @@ export function dayFromTasks(date: string, tasks: TaskDTO[]): DayDTO {
 /** Historique clos + journée en cours reconstituée. */
 export const getHistory = cache(async (days = HEATMAP_DAYS): Promise<DayDTO[]> => {
   const u = await getCurrentUser();
-  const today = todayISO();
+  const today = await getToday();
   const from = addDays(today, -(days - 1));
 
   const rows = await prisma.dayRecord.findMany({
@@ -210,7 +224,7 @@ export const getHistory = cache(async (days = HEATMAP_DAYS): Promise<DayDTO[]> =
 export async function getWeeklyTasks(weekStart: string): Promise<TaskDTO[]> {
   const u = await getCurrentUser();
 
-  if (weekStart >= startOfWeek(todayISO())) {
+  if (weekStart >= startOfWeek(await getToday())) {
     await materializeWeeklyTemplates(u.id, weekStart);
   }
 
@@ -252,7 +266,7 @@ export async function getMonth(
   month: number,
 ): Promise<Record<string, DayDTO>> {
   const u = await getCurrentUser();
-  const today = todayISO();
+  const today = await getToday();
   const first = new Date(Date.UTC(year, month, 1));
   const from = addDays(first.toISOString().slice(0, 10), -7);
   const to = addDays(
@@ -322,7 +336,7 @@ export const getRewards = cache(async (): Promise<RewardDTO[]> => {
 
 const metrics = cache(async (): Promise<Record<string, number>> => {
   const u = await getCurrentUser();
-  const today = todayISO();
+  const today = await getToday();
 
   const [doneCount, byCategory, days, categories] = await Promise.all([
     prisma.task.count({ where: { userId: u.id, done: true } }),
@@ -438,7 +452,7 @@ export async function getWeeklyXp(): Promise<{ label: string; xp: number }[]> {
   const weeks: { label: string; xp: number }[] = [];
 
   // On aligne les paquets de 7 sur le lundi de la première semaine pleine.
-  const offset = (isoWeekday(history[0]?.date ?? todayISO()) - 1) % 7;
+  const offset = (isoWeekday(history[0]?.date ?? (await getToday())) - 1) % 7;
   const aligned = history.slice(offset);
 
   for (let i = 0; i + 7 <= aligned.length; i += 7) {

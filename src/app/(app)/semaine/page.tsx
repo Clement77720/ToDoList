@@ -7,8 +7,9 @@ import {
   getCurrentUser,
   getRoutines,
   getWeeklyTasks,
+  getToday,
 } from "@/lib/queries";
-import { startOfWeek, todayISO, weekDates } from "@/lib/dates";
+import { startOfWeek, weekDates } from "@/lib/dates";
 import { getWeekKind } from "@/lib/weeks";
 
 export const metadata = { title: "Ma semaine — QuestList" };
@@ -19,7 +20,7 @@ export default async function SemainePage({
   searchParams: Promise<{ w?: string }>;
 }) {
   const { w } = await searchParams;
-  const today = todayISO();
+  const today = await getToday();
   const weekStart = startOfWeek(
     w && /^\d{4}-\d{2}-\d{2}$/.test(w) ? w : today,
   );

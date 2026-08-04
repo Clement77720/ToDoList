@@ -55,7 +55,7 @@ il y a cinq semaines, puis la remontée en cours. Les dates sont relatives à
 | `/badges` | Galerie 31 badges, filtres par famille, verrouillés visibles avec progression |
 | `/boutique` | Pièces → récompenses **réelles** définies par l'utilisateur, + cosmétiques |
 | `/stats` | Radar d'équilibre, XP nette par semaine, assiduité, **et le barème complet en clair** |
-| `/profil` | Photo, surnom, grade, progression et niveaux par catégorie |
+| `/profil` | Photo, surnom, **fuseau horaire**, grade, progression et niveaux par catégorie |
 
 ## Les trois types de tâche
 
@@ -94,10 +94,15 @@ tâches du jour à partir des routines.
 
 Il tourne en **cron quotidien** sur Vercel (`vercel.json` → 00h15 UTC), et
 reste rattrapé paresseusement au premier chargement de page pour les comptes
-créés entre deux passages. L'opération est idempotente —
-`lastRollover` empêche de clore un jour deux fois, `malusApplied` de débiter une
-tâche deux fois. Une absence de plusieurs semaines est rattrapée jour par jour
-(plafonnée à 120 journées).
+créés entre deux passages. Chaque compte est clos selon **son** fuseau horaire :
+le cron passe à heure fixe, mais « hier » n'est pas le même partout.
+
+L'opération est idempotente — `lastRollover` empêche de clore un jour deux
+fois, `malusApplied` de débiter une tâche deux fois — et la journée est
+**réservée par compare-and-swap** avant tout travail, pour que deux instances
+serverless entrées ensemble ne matérialisent pas les tâches en double. Une
+absence de plusieurs semaines est rattrapée jour par jour (plafonnée à 120
+journées).
 
 ## Les règles du jeu
 
@@ -162,7 +167,7 @@ src/
     catalog.ts      catalogue statique : badges, catégories et routines par défaut
     queries.ts      lectures serveur, typées en DTO
     rollover.ts     le job de minuit
-    dates.ts        helpers yyyy-mm-dd, tout en UTC
+    dates.ts        helpers yyyy-mm-dd, tout en UTC + jour selon fuseau
     db.ts           client Prisma (singleton, adaptateur node-postgres)
 ```
 
@@ -196,6 +201,3 @@ dans une base réelle.
 
 - **Pas de réinitialisation de mot de passe** : il faudrait un service d'envoi
   d'emails.
-- **La journée est celle du serveur** (UTC sur Vercel), pas celle de
-  l'utilisateur : un joueur en France voit son jour basculer à 2 h du matin
-  l'été. Le corriger demanderait de stocker un fuseau par compte.

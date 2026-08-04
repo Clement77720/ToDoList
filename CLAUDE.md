@@ -101,10 +101,30 @@ toutes les lectures pour un gain nul tant que TypeScript valide :
 - Les dates sont des chaînes **`yyyy-mm-dd`**, jamais des `Date`.
 
 `src/lib/dates.ts` fait tous les calculs **en UTC** pour que serveur et client
-tombent d'accord. Seul `todayISO()` lit l'horloge locale : il s'appelle côté
-serveur, et la date descend en props. **Ne jamais recalculer « aujourd'hui »
-dans un composant client** — l'hydratation diverge au premier changement de
-fuseau.
+tombent d'accord. **Ne jamais recalculer « aujourd'hui » dans un composant
+client** — l'hydratation diverge : la date descend en props depuis le serveur.
+
+### Quel « aujourd'hui » ?
+
+Trois fonctions, à ne pas confondre :
+
+| Fonction | Usage |
+|---|---|
+| `getToday()` (`queries.ts`) | **la seule à utiliser côté serveur applicatif** — pages, Server Actions, lectures. Renvoie le jour du compte connecté, mis en cache par requête |
+| `todayISOIn(tz)` (`dates.ts`) | quand on a le fuseau mais pas de session : le cron, qui balaie tous les comptes |
+| `todayISO()` (`dates.ts`) | horloge locale de la machine — **réservé au seed** |
+
+`User.timezone` (IANA, défaut `Europe/Paris`) décide de l'heure à laquelle la
+journée d'un joueur bascule. Sans lui, l'horloge serveur d'un déploiement
+Vercel étant en UTC, la journée d'un joueur français basculait à 2 h du matin
+l'été : les malus du soir tombaient en pleine nuit et le tableau de bord
+affichait la veille. Le fuseau est capté depuis le navigateur à l'inscription
+et modifiable sur `/profil` ; une valeur non reconnue par `Intl` retombe
+silencieusement sur le défaut plutôt que de faire lever toutes les lectures.
+
+La liste des fuseaux du sélecteur est calculée **côté serveur** et descendue en
+props : `Intl.supportedValuesOf` peut différer entre l'ICU de Node et celui du
+navigateur, et une liste d'options différente ferait diverger l'hydratation.
 
 Une hebdomadaire encore en réserve a `date: null` et un `weekStart` renseigné.
 C'est ce qui la distingue d'une hebdomadaire placée.
@@ -241,6 +261,14 @@ d'historique fictif.
 la variable est définie — et répond 500 plutôt que de rester ouverte si le
 secret manque. `CRON_SECRET` se définit dans les variables d'environnement
 Vercel, au même endroit que `DATABASE_URL`.
+
+Chaque compte est clos selon **son** fuseau : le cron passe à heure fixe, mais
+« hier » n'est pas le même pour tout le monde. Un passage quotidien tombe donc
+plus ou moins loin du minuit local selon le fuseau — pour un joueur français
+c'est 1 h ou 2 h du matin, soit tout de suite ; pour un fuseau américain
+l'écart atteint une quinzaine d'heures, et c'est le chemin paresseux qui
+rattrape. Passer le cron à l'heure (`0 * * * *`) supprimerait l'écart, mais
+demande un plan Vercel payant.
 
 Le chemin paresseux (`getSessionUser()` → `ensureRollover()`) reste en place :
 il couvre les comptes créés après le passage du cron et le cas où celui-ci

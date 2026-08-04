@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useRef, useState, useTransition } from "react";
+import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { updatePhotoAction, updateProfileAction } from "@/app/auth-actions";
 import type { PlayerDTO } from "@/lib/types";
 import { useToaster } from "./Toaster";
@@ -45,13 +45,40 @@ function shrink(file: File): Promise<string> {
   });
 }
 
-export function ProfileEditor({ player }: { player: PlayerDTO }) {
+export function ProfileEditor({
+  player,
+  zones,
+}: {
+  player: PlayerDTO;
+  /** Liste calculée côté serveur : `Intl.supportedValuesOf` peut différer
+      entre Node et le navigateur, et l'hydratation divergerait. */
+  zones: string[];
+}) {
   const { report } = useToaster();
   const [state, formAction, saving] = useActionState(updateProfileAction, null);
   const [avatar, setAvatar] = useState(player.avatar);
   const [photo, setPhoto] = useState(player.photo);
   const [busy, startTransition] = useTransition();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [zone, setZone] = useState(player.timezone);
+
+  // L'heure ne peut pas être rendue au premier passage : le serveur et le
+  // navigateur ne la liraient pas au même instant. On l'affiche après
+  // montage, jamais pendant l'hydratation.
+  const [heure, setHeure] = useState<string | null>(null);
+  useEffect(() => {
+    const tick = () =>
+      setHeure(
+        new Date().toLocaleTimeString("fr-FR", {
+          timeZone: zone,
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      );
+    tick();
+    const id = setInterval(tick, 30_000);
+    return () => clearInterval(id);
+  }, [zone]);
 
   const pickPhoto = async (file: File | undefined) => {
     if (!file) return;
@@ -151,6 +178,29 @@ export function ProfileEditor({ player }: { player: PlayerDTO }) {
               Utilisé quand aucune photo n&apos;est définie.
             </p>
           </div>
+
+          <label className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-semibold tracking-wide text-ink-2 uppercase">
+              Fuseau horaire
+            </span>
+            <select
+              name="timezone"
+              value={zone}
+              onChange={(e) => setZone(e.target.value)}
+              className="w-full rounded-lg border border-line bg-panel px-3 py-2 text-sm outline-none focus:border-violet"
+            >
+              {zones.map((z) => (
+                <option key={z} value={z}>
+                  {z.replace(/_/g, " ")}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-ink-3">
+              Décide de l&apos;heure à laquelle ta journée bascule — donc du
+              moment où tombent les malus.
+              {heure ? ` Il est ${heure} dans ce fuseau.` : ""}
+            </p>
+          </label>
 
           <div className="flex flex-col gap-1.5">
             <span className="text-[11px] font-semibold tracking-wide text-ink-2 uppercase">

@@ -37,6 +37,10 @@ model User {
   bestStreak Int @default(0)
   shields    Int @default(0)
 
+  /// Fuseau IANA du joueur. Décide de l'heure à laquelle *sa* journée
+  /// bascule : l'horloge du serveur est en UTC sur Vercel.
+  timezone String @default("Europe/Paris")
+
   /// Dernière date (yyyy-mm-dd) traitée par le job de minuit.
   lastRollover String?
 

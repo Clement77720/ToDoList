@@ -13,6 +13,7 @@ import {
   verifyPassword,
 } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/queries";
+import { DEFAULT_TIMEZONE, isValidTimeZone } from "@/lib/dates";
 
 export type AuthResult = { ok: false; error: string };
 
@@ -35,6 +36,11 @@ export async function signUpAction(
   const invalid = validateCredentials(email, password);
   if (invalid) return { ok: false, error: invalid };
 
+  // Le navigateur transmet son fuseau à l'inscription ; il est révisable
+  // ensuite depuis le profil. Une valeur inconnue retombe sur le défaut.
+  const proposed = String(form.get("timezone") ?? "");
+  const timezone = isValidTimeZone(proposed) ? proposed : DEFAULT_TIMEZONE;
+
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) return { ok: false, error: "Un compte existe déjà avec cet email." };
 
@@ -42,6 +48,7 @@ export async function signUpAction(
     email,
     passwordHash: await hashPassword(password),
     name,
+    timezone,
   });
 
   await createSession(user.id);
@@ -88,9 +95,12 @@ export async function updateProfileAction(
 
   const avatar = String(form.get("avatar") ?? "").trim() || "🦊";
 
+  const proposed = String(form.get("timezone") ?? "");
+  const timezone = isValidTimeZone(proposed) ? proposed : user.timezone;
+
   await prisma.user.update({
     where: { id: user.id },
-    data: { name, avatar },
+    data: { name, avatar, timezone },
   });
 
   revalidatePath("/", "layout");

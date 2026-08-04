@@ -10,8 +10,9 @@ import {
   getPlayer,
   getTasksForDate,
   getWeeklyTasks,
+  getToday,
 } from "@/lib/queries";
-import { formatLong, startOfWeek, todayISO } from "@/lib/dates";
+import { formatLong, startOfWeek } from "@/lib/dates";
 import { getWeekKind } from "@/lib/weeks";
 import { DAILY_XP_CAP, isEngagement, RARITY } from "@/lib/gamification";
 
@@ -65,7 +66,7 @@ function QuestRow({
 }
 
 export default async function Dashboard() {
-  const today = todayISO();
+  const today = await getToday();
   const weekStart = startOfWeek(today);
 
   const player = await getPlayer();

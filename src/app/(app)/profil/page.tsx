@@ -19,6 +19,12 @@ export default async function ProfilPage() {
   const tasksDone = history.reduce((s, d) => s + d.done, 0);
   const netXp = history.reduce((s, d) => s + d.xp, 0);
 
+  // Liste calculée ici, côté serveur : l'ICU de Node et celui du navigateur
+  // peuvent différer, et une liste d'options différente ferait diverger
+  // l'hydratation.
+  const zones = [...Intl.supportedValuesOf("timeZone")];
+  if (!zones.includes(player.timezone)) zones.unshift(player.timezone);
+
   const rarest = [...unlocked].sort(
     (a, b) =>
       ["bronze", "argent", "or", "platine"].indexOf(b.rarity) -
@@ -33,7 +39,7 @@ export default async function ProfilPage() {
       />
 
       <div className="flex flex-col gap-4">
-        <ProfileEditor player={player} />
+        <ProfileEditor player={player} zones={zones} />
 
         {/* Grade et progression */}
         <Card>

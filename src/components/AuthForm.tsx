@@ -37,6 +37,21 @@ export function AuthForm({
       </header>
 
       <form action={formAction} className="flex flex-col gap-3">
+        {/* Fuseau du navigateur : c'est lui qui décide de l'heure à laquelle
+            la journée du joueur bascule. Révisable ensuite depuis le profil,
+            et ignoré côté serveur s'il n'est pas reconnu. */}
+        {isSignUp ? (
+          <input
+            type="hidden"
+            name="timezone"
+            value={
+              typeof Intl === "undefined"
+                ? ""
+                : Intl.DateTimeFormat().resolvedOptions().timeZone
+            }
+          />
+        ) : null}
+
         {isSignUp ? (
           <label className="flex flex-col gap-1.5">
             <span className="text-[11px] font-semibold tracking-wide text-ink-2 uppercase">

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { todayISO } from "@/lib/dates";
+import { todayISOIn } from "@/lib/dates";
 import { ensureRollover } from "@/lib/rollover";
 
 /**
@@ -33,17 +33,20 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
 
-  const today = todayISO();
-  const users = await prisma.user.findMany({ select: { id: true } });
+  const users = await prisma.user.findMany({
+    select: { id: true, timezone: true },
+  });
 
   let traites = 0;
   const echecs: string[] = [];
 
   // Séquentiel et isolé : un compte en erreur ne doit pas priver les
-  // autres de leur rollover.
-  for (const { id } of users) {
+  // autres de leur rollover. Chaque compte est clos selon *son* fuseau —
+  // le cron passe à heure fixe, mais « hier » n'est pas le même pour tout
+  // le monde.
+  for (const { id, timezone } of users) {
     try {
-      await ensureRollover(id, today);
+      await ensureRollover(id, todayISOIn(timezone));
       traites += 1;
     } catch (error) {
       echecs.push(`${id}: ${(error as Error).message}`);
@@ -52,7 +55,6 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     ok: echecs.length === 0,
-    date: today,
     comptes: users.length,
     traites,
     echecs,

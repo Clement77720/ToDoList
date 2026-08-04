@@ -18,6 +18,7 @@ export async function createUserWithDefaults(data: {
   email: string;
   passwordHash: string;
   name: string;
+  timezone?: string;
 }): Promise<{ id: string }> {
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.create({ data });

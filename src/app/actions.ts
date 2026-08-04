@@ -2,10 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
-import { getCurrentUser, grantEarnedBadges } from "@/lib/queries";
+import { getCurrentUser, getToday, grantEarnedBadges } from "@/lib/queries";
 import { applyXpDelta, materializeRoutines } from "@/lib/rollover";
 import { categoryXpToNext } from "@/lib/catalog";
-import { isoWeekday, startOfWeek, todayISO } from "@/lib/dates";
+import { isoWeekday, startOfWeek } from "@/lib/dates";
 import { getWeekKind } from "@/lib/weeks";
 import {
   DAILY_MALUS_CAP,
@@ -61,7 +61,7 @@ export async function toggleTaskAction(taskId: string): Promise<ActionResult> {
   });
   if (!task) return { ok: false, error: "Tâche introuvable." };
 
-  const today = todayISO();
+  const today = await getToday();
   const reward = taskReward(task.difficulty as DifficultyKey, {
     onTime: task.date === today,
     streakDays: user.streak,
@@ -109,7 +109,7 @@ export async function placeWeeklyAction(
   if (!task) return { ok: false, error: "Engagement introuvable." };
 
   if (date) {
-    if (date < todayISO()) {
+    if (date < (await getToday())) {
       return { ok: false, error: "Impossible de planifier dans le passé." };
     }
     // Le quota du jour couvre quotidiennes ET hebdomadaires. Les
@@ -175,7 +175,7 @@ export async function toggleRoutineDayAction(
   });
 
   // Répercuter sur aujourd'hui : on ne touche jamais au passé.
-  const today = todayISO();
+  const today = await getToday();
   if (dow === isoWeekday(today)) {
     if (active) {
       await prisma.task.deleteMany({
@@ -392,7 +392,7 @@ export async function buyRewardAction(
  */
 export async function applyTonightMalusAction(): Promise<ActionResult> {
   const user = await getCurrentUser();
-  const today = todayISO();
+  const today = await getToday();
 
   if ((await getWeekKind(user.id, startOfWeek(today))) === "vacances") {
     return { ok: false, error: "Semaine de vacances : aucun malus." };
