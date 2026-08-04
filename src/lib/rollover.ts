@@ -31,7 +31,54 @@ export async function ensureRollover(userId: string, today: string) {
   if (!user) return;
   if (user.lastRollover === today) return; // déjà à jour
 
-  const from = user.lastRollover ?? addDays(today, -1);
+  const previous = user.lastRollover;
+
+  /*
+   * Réservation atomique de la journée.
+   *
+   * Lire `lastRollover` puis l'écrire à la fin laissait une fenêtre : en
+   * serverless, plusieurs instances (ou une requête et le cron) entraient
+   * ensemble. Le dégât n'est pas sur l'XP — écrite en valeur absolue
+   * recalculée depuis le même instantané, elle converge — mais sur
+   * `materializeRoutines` et `materializeWeeklyTemplates`, qui lisent ce
+   * qui existe puis insèrent ce qui manque : chacune lit « rien » et
+   * insère. Mesuré à 12 rollovers concurrents : 24 quotidiennes créées au
+   * lieu de 2.
+   *
+   * Ce `updateMany` conditionné sur la valeur lue est un compare-and-swap :
+   * Postgres ne laisse passer qu'un seul écrivain, les autres voient
+   * `count === 0` et ressortent sans rien faire.
+   *
+   * On marque donc la journée traitée *avant* de travailler. C'est
+   * volontaire : mieux vaut sauter un rollover en cas d'incident que le
+   * jouer deux fois.
+   */
+  const claim = await prisma.user.updateMany({
+    where: { id: userId, lastRollover: previous },
+    data: { lastRollover: today },
+  });
+  if (claim.count === 0) return; // un autre processus s'en charge
+
+  try {
+    await runRollover(user, today, previous);
+  } catch (error) {
+    // Rendre la réservation pour que la prochaine tentative reprenne le
+    // travail, plutôt que de laisser une journée définitivement sautée.
+    await prisma.user.updateMany({
+      where: { id: userId, lastRollover: today },
+      data: { lastRollover: previous },
+    });
+    throw error;
+  }
+}
+
+async function runRollover(
+  user: { id: string; level: number; xp: number; streak: number; bestStreak: number; shields: number },
+  today: string,
+  previous: string | null,
+) {
+  const userId = user.id;
+  const from = previous ?? addDays(today, -1);
   const gap = Math.min(daysBetween(from, today), MAX_CATCHUP_DAYS);
 
   let { level, xp, streak, bestStreak, shields } = user;

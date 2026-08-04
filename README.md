@@ -92,8 +92,9 @@ débite les quotidiennes oubliées, applique le malus hebdomadaire le dimanche,
 fait avancer la série (en consommant un joker si besoin) et matérialise les
 tâches du jour à partir des routines.
 
-En production ce serait un cron. Ici le rollover est **rattrapé
-paresseusement** au premier chargement de la journée, via `getCurrentUser()`. L'opération est idempotente —
+Il tourne en **cron quotidien** sur Vercel (`vercel.json` → 00h15 UTC), et
+reste rattrapé paresseusement au premier chargement de page pour les comptes
+créés entre deux passages. L'opération est idempotente —
 `lastRollover` empêche de clore un jour deux fois, `malusApplied` de débiter une
 tâche deux fois. Une absence de plusieurs semaines est rattrapée jour par jour
 (plafonnée à 120 journées).
@@ -174,7 +175,11 @@ reçoivent que les DTO plats de `src/lib/types.ts`.
    string **poolée** (son hôte contient `-pooler`).
 2. **Importer le dépôt sur Vercel**, puis définir `DATABASE_URL` dans
    *Settings → Environment Variables* avec cette URL.
-3. **Déployer.** Vercel exécute `vercel-build`, qui joue
+3. **Définir `CRON_SECRET`** dans les mêmes variables d'environnement
+   (`openssl rand -base64 32`). Elle protège `/api/cron/rollover`, qui écrit
+   en base ; Vercel l'envoie automatiquement en `Authorization: Bearer` sur
+   les requêtes de cron, et la route refuse tout le reste.
+4. **Déployer.** Vercel exécute `vercel-build`, qui joue
    `prisma migrate deploy` avant `next build` : le schéma est appliqué tout
    seul à chaque déploiement.
 
@@ -189,9 +194,8 @@ dans une base réelle.
 
 ### Ce qui reste à faire
 
-- **Le rollover reste paresseux**, déclenché par la première requête du jour.
-  En serverless, deux requêtes concurrentes peuvent entrer ensemble dans
-  `ensureRollover()` et appliquer deux fois malus et XP. Un Vercel Cron
-  quotidien réglerait le problème.
 - **Pas de réinitialisation de mot de passe** : il faudrait un service d'envoi
   d'emails.
+- **La journée est celle du serveur** (UTC sur Vercel), pas celle de
+  l'utilisateur : un joueur en France voit son jour basculer à 2 h du matin
+  l'été. Le corriger demanderait de stocker un fuseau par compte.

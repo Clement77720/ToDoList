@@ -121,6 +121,24 @@ Deux garde-fous d'idempotence, **à ne jamais contourner** :
 (une tâche n'est débitée qu'une fois). Rattrapage plafonné à
 `MAX_CATCHUP_DAYS = 120` jours.
 
+### Concurrence — la réservation de la journée
+
+`ensureRollover()` **réserve** la journée par compare-and-swap avant de
+travailler : un `updateMany` conditionné sur la valeur de `lastRollover`
+qui vient d'être lue. Postgres ne laisse passer qu'un écrivain ; les autres
+voient `count === 0` et ressortent. Ne pas remplacer ce motif par un
+`update` simple.
+
+Le dégât évité n'est **pas** un double débit d'XP — celle-ci est écrite en
+valeur absolue recalculée depuis le même instantané, donc des exécutions
+concurrentes convergent. C'est `materializeRoutines()` et
+`materializeWeeklyTemplates()` qui sont vulnérables : elles lisent ce qui
+existe puis insèrent ce qui manque. Sans la réservation, 12 rollovers
+concurrents créaient **24 quotidiennes au lieu de 2**.
+
+La journée est marquée traitée *avant* le travail, et rendue si celui-ci
+lève. Mieux vaut sauter un rollover qu'en jouer deux.
+
 La boucle clôt les jours de `today - gap` à **hier inclus**. L'index est
 délicat : une version antérieure itérait `addDays(today, -(gap - i))` sur
 `i` de 1 à `gap` et ne clôturait jamais la veille quand `gap = 1` — soit le
@@ -217,13 +235,16 @@ valeurs par défaut issues de `catalog.ts` (`bootstrap.ts`, en une transaction).
 `npm run db:seed` reste réservé au local — il **efface tout** et rejoue six mois
 d'historique fictif.
 
-Un chantier reste ouvert :
+**Le rollover tourne en cron** : `vercel.json` déclenche
+`GET /api/cron/rollover` tous les jours à 00h15 UTC. La route exige
+`Authorization: Bearer $CRON_SECRET` — Vercel l'envoie automatiquement quand
+la variable est définie — et répond 500 plutôt que de rester ouverte si le
+secret manque. `CRON_SECRET` se définit dans les variables d'environnement
+Vercel, au même endroit que `DATABASE_URL`.
 
-1. **Le rollover en cron.** Il est déclenché par la première requête du jour ;
-   en serverless, deux requêtes concurrentes peuvent entrer ensemble dans
-   `ensureRollover()` — la garde `lastRollover` est lue au début et écrite à la
-   fin — et appliquer deux fois malus et XP. Un Vercel Cron quotidien règle le
-   problème.
+Le chemin paresseux (`getSessionUser()` → `ensureRollover()`) reste en place :
+il couvre les comptes créés après le passage du cron et le cas où celui-ci
+échoue. Les deux ne peuvent pas se marcher dessus, cf. ci-dessous.
 
 ## Git
 
