@@ -9,6 +9,7 @@ import {
   getWeeklyTasks,
 } from "@/lib/queries";
 import { startOfWeek, todayISO, weekDates } from "@/lib/dates";
+import { getWeekKind } from "@/lib/weeks";
 
 export const metadata = { title: "Ma semaine — QuestList" };
 
@@ -24,11 +25,12 @@ export default async function SemainePage({
   );
   const days = weekDates(weekStart);
 
-  const [user, routines, weekly, categories] = await Promise.all([
-    getCurrentUser(),
+  const user = await getCurrentUser();
+  const [routines, weekly, categories, weekKind] = await Promise.all([
     getRoutines(),
     getWeeklyTasks(weekStart),
     getCategories(),
+    getWeekKind(user.id, weekStart),
   ]);
 
   // Quotidiennes déjà créées en base pour cette semaine : elles priment
@@ -58,6 +60,7 @@ export default async function SemainePage({
         weekly={weekly}
         materialized={materialized}
         categories={categories}
+        weekKind={weekKind}
       />
       <div className="mt-4">
         <RoutinesEditor routines={routines} />

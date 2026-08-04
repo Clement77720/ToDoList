@@ -1,8 +1,9 @@
 import "server-only";
 import { cache } from "react";
+import { redirect } from "next/navigation";
 import { prisma } from "./db";
-import { bootstrapUser } from "./bootstrap";
-import { ensureRollover } from "./rollover";
+import { getSessionUserId } from "./auth";
+import { ensureRollover, materializeWeeklyTemplates } from "./rollover";
 import { addDays, isoWeekday, startOfWeek, todayISO } from "./dates";
 import { BADGES, categoryXpToNext } from "./catalog";
 import {
@@ -74,30 +75,42 @@ const taskSelect = {
 } as const;
 
 /**
- * Utilisateur courant. Mono-utilisateur pour l'instant : on prend le seul
- * compte de la base. Le jour de l'authentification, seule cette fonction
- * change — tout le reste passe déjà par un `userId`.
+ * Compte connecté, ou `null`. C'est ici que se branche l'authentification :
+ * tout le reste de l'application travaille déjà à partir d'un `userId`.
  *
- * Une base vide est amorcée à la volée plutôt que de lever : sinon un
- * déploiement neuf reste en erreur 500 jusqu'à ce qu'on lance le seed
- * manuellement (cf. `bootstrap.ts`).
- *
- * `cache()` déduplique l'appel (et donc le rollover) sur une même requête.
+ * Le rollover est déclenché au passage, une seule fois par requête grâce à
+ * `cache()` qui déduplique l'appel.
  */
-export const getCurrentUser = cache(async () => {
-  const found = await prisma.user.findFirst({ orderBy: { createdAt: "asc" } });
-  const user = found ?? (await bootstrapUser());
+export const getSessionUser = cache(async () => {
+  const userId = await getSessionUserId();
+  if (!userId) return null;
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) return null; // session orpheline (compte supprimé)
 
   await ensureRollover(user.id, todayISO());
   return prisma.user.findUniqueOrThrow({ where: { id: user.id } });
 });
+
+/**
+ * Même chose, mais pour tout ce qui suppose un utilisateur : pages
+ * protégées et Server Actions. Redirige vers la connexion plutôt que de
+ * lever, pour qu'une session expirée ne produise pas une page d'erreur.
+ */
+export const getCurrentUser = async () => {
+  const user = await getSessionUser();
+  if (!user) redirect("/connexion");
+  return user;
+};
 
 export const getPlayer = cache(async (): Promise<PlayerDTO> => {
   const u = await getCurrentUser();
   return {
     id: u.id,
     name: u.name,
+    email: u.email,
     avatar: u.avatar,
+    photo: u.photo,
     level: u.level,
     xp: u.xp,
     xpMax: xpToNextLevel(u.level),
@@ -186,9 +199,21 @@ export const getHistory = cache(async (days = HEATMAP_DAYS): Promise<DayDTO[]> =
   return closed;
 });
 
-/** Tâches hebdomadaires d'une semaine : placées et encore en réserve. */
+/**
+ * Tâches hebdomadaires d'une semaine : placées et encore en réserve.
+ *
+ * Les engagements récurrents sont matérialisés à la lecture, pour que
+ * planifier la semaine prochaine les fasse apparaître sans attendre le
+ * rollover. Jamais sur une semaine révolue : ce serait fabriquer après coup
+ * des engagements en retard.
+ */
 export async function getWeeklyTasks(weekStart: string): Promise<TaskDTO[]> {
   const u = await getCurrentUser();
+
+  if (weekStart >= startOfWeek(todayISO())) {
+    await materializeWeeklyTemplates(u.id, weekStart);
+  }
+
   const rows = await prisma.task.findMany({
     where: { userId: u.id, weekStart, kind: "hebdomadaire" },
     orderBy: { createdAt: "asc" },

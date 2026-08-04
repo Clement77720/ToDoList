@@ -2,7 +2,12 @@
 
 import Link from "next/link";
 import { useOptimistic, useState, useTransition } from "react";
-import { addWeeklyTaskAction, placeWeeklyAction } from "@/app/actions";
+import {
+  addWeeklyTaskAction,
+  placeWeeklyAction,
+  setWeekKindAction,
+  updateWeeklyTaskAction,
+} from "@/app/actions";
 import {
   addDays,
   dayOfMonth,
@@ -16,7 +21,9 @@ import {
   MALUS,
   MAX_ENGAGEMENTS_PER_DAY,
   TASK_KINDS,
+  WEEK_KINDS,
   type DifficultyKey,
+  type WeekKind,
 } from "@/lib/gamification";
 import type { CategoryDTO, RoutineDTO, TaskDTO } from "@/lib/types";
 import { AddTaskForm } from "./AddTaskForm";
@@ -30,6 +37,7 @@ export function WeekPlanner({
   weekly,
   materialized,
   categories,
+  weekKind,
 }: {
   weekStart: string;
   today: string;
@@ -38,21 +46,27 @@ export function WeekPlanner({
   /** Quotidiennes déjà créées en base, par date. */
   materialized: Record<string, number>;
   categories: CategoryDTO[];
+  weekKind: WeekKind;
 }) {
   const { report } = useToaster();
   const [selected, setSelected] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
   const [, startTransition] = useTransition();
   const [tasks, applyMove] = useOptimistic(
     weekly,
     (state: TaskDTO[], move: { id: string; date: string | null }) =>
       state.map((t) => (t.id === move.id ? { ...t, date: move.date } : t)),
   );
+  const [kind, applyKind] = useOptimistic(weekKind, (_: WeekKind, k: WeekKind) => k);
 
   const days = weekDates(weekStart);
   const reserve = tasks.filter((t) => !t.date);
   const placedCount = tasks.length - reserve.length;
   const pending = tasks.filter((t) => !t.done);
-  const atRisk = pending.length * MALUS.hebdomadaire;
+  const onVacation = kind === "vacances";
+  const atRisk = onVacation ? 0 : pending.length * MALUS.hebdomadaire;
 
   const routinesFor = (dow: number) => routines.filter((r) => r.days.includes(dow));
 
@@ -62,15 +76,42 @@ export function WeekPlanner({
 
   const move = (id: string, date: string | null) => {
     setSelected(null);
+    setDragging(null);
+    setOver(null);
     startTransition(async () => {
       applyMove({ id, date });
       report(await placeWeeklyAction(id, date));
     });
   };
 
-  const add = async (title: string, slug: string, difficulty: DifficultyKey) => {
-    report(await addWeeklyTaskAction(weekStart, title, slug, difficulty));
+  const add = async (
+    title: string,
+    slug: string,
+    difficulty: DifficultyKey,
+    recurring: boolean,
+  ) => {
+    report(await addWeeklyTaskAction(weekStart, title, slug, difficulty, recurring));
   };
+
+  const edit = async (
+    id: string,
+    title: string,
+    slug: string,
+    difficulty: DifficultyKey,
+  ) => {
+    report(await updateWeeklyTaskAction(id, title, slug, difficulty));
+  };
+
+  const setKind = (next: WeekKind) => {
+    startTransition(async () => {
+      applyKind(next);
+      report(await setWeekKindAction(weekStart, next));
+    });
+  };
+
+  /** Un jour accepte-t-il encore un dépôt ? */
+  const accepts = (date: string) =>
+    date >= today && MAX_ENGAGEMENTS_PER_DAY - occupancy(date) > 0;
 
   const isCurrentWeek = today >= weekStart && today <= days[6];
 
@@ -91,36 +132,93 @@ export function WeekPlanner({
             <ul className="flex flex-col gap-2">
               {reserve.map((w) => {
                 const isSel = selected === w.id;
+
+                if (editing === w.id) {
+                  return (
+                    <li key={w.id}>
+                      <AddTaskForm
+                        categories={categories}
+                        label="Modifier"
+                        placeholder="Intitulé de l'engagement"
+                        initial={{
+                          title: w.title,
+                          slug: w.category.slug,
+                          difficulty: w.difficulty,
+                        }}
+                        onCancel={() => setEditing(null)}
+                        onSubmit={(title, slug, difficulty) =>
+                          edit(w.id, title, slug, difficulty)
+                        }
+                      />
+                    </li>
+                  );
+                }
+
                 return (
                   <li key={w.id}>
-                    <button
-                      type="button"
-                      onClick={() => setSelected(isSel ? null : w.id)}
-                      aria-pressed={isSel}
+                    <div
+                      draggable
+                      onDragStart={(e) => {
+                        setDragging(w.id);
+                        setSelected(w.id);
+                        e.dataTransfer.effectAllowed = "move";
+                        // Firefox exige une charge utile pour démarrer le glissé.
+                        e.dataTransfer.setData("text/plain", w.id);
+                      }}
+                      onDragEnd={() => {
+                        setDragging(null);
+                        setOver(null);
+                      }}
                       className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2.5 text-left transition-all ${
-                        isSel
-                          ? "border-violet-bright bg-violet/20 ring-2 ring-violet/40"
-                          : "border-line bg-panel-2 hover:border-violet/40"
+                        dragging === w.id
+                          ? "opacity-40"
+                          : isSel
+                            ? "border-violet-bright bg-violet/20 ring-2 ring-violet/40"
+                            : "border-line bg-panel-2 hover:border-violet/40"
                       }`}
                     >
+                      <span
+                        aria-hidden
+                        className="cursor-grab text-ink-3 active:cursor-grabbing"
+                        title="Glisser vers un jour"
+                      >
+                        ⠿
+                      </span>
                       <span
                         aria-hidden
                         className="size-2 shrink-0 rounded-full"
                         style={{ background: w.category.color }}
                       />
-                      <span className="min-w-0 flex-1">
+
+                      <button
+                        type="button"
+                        onClick={() => setSelected(isSel ? null : w.id)}
+                        aria-pressed={isSel}
+                        className="min-w-0 flex-1 text-left"
+                      >
                         <span className="block truncate text-[13px]">
                           {w.title}
                         </span>
                         <span className="text-[10px] text-ink-3">
-                          {DIFFICULTIES[w.difficulty].label} · −
-                          {MALUS.hebdomadaire} XP dimanche
+                          {DIFFICULTIES[w.difficulty].label}
+                          {onVacation
+                            ? " · aucun malus 🌴"
+                            : ` · −${MALUS.hebdomadaire} XP dimanche`}
                         </span>
-                      </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setEditing(w.id)}
+                        aria-label={`Modifier ${w.title}`}
+                        className="shrink-0 text-[11px] text-ink-3 transition-colors hover:text-violet-bright"
+                      >
+                        ✎
+                      </button>
                       <span className="shrink-0 text-[10px] font-semibold text-violet-bright">
-                        {isSel ? "choisir un jour ↓" : "placer"}
+                        {isSel ? "↓" : ""}
                       </span>
-                    </button>
+                    </div>
                   </li>
                 );
               })}
@@ -133,8 +231,15 @@ export function WeekPlanner({
               label="Ajouter un engagement hebdo"
               placeholder="Ex. Prendre RDV dentiste"
               onSubmit={add}
+              allowRecurring
             />
           </div>
+
+          <p className="mt-2 text-[10px] leading-relaxed text-ink-3">
+            Glisse un engagement sur un jour, ou clique-le puis choisis le jour.
+            Il se modifie mais ne se supprime pas — s&apos;en débarrasser d&apos;un
+            clic n&apos;en serait plus un.
+          </p>
         </Card>
 
         <Card className={atRisk > 0 ? "border-fire/35" : "border-cat-sante/30"}>
@@ -152,8 +257,9 @@ export function WeekPlanner({
             </span>
           </div>
           <p className="mt-2 text-[11px] leading-relaxed text-ink-3">
-            Une hebdomadaire ratée un mardi ne coûte rien : tu la reposes
-            ailleurs. Le malus ne tombe qu&apos;au bout de la semaine.
+            {onVacation
+              ? "Semaine de vacances : rien n'est débité dimanche soir."
+              : "Une hebdomadaire ratée un mardi ne coûte rien : tu la reposes ailleurs. Le malus ne tombe qu'au bout de la semaine."}
           </p>
         </Card>
       </div>
@@ -185,10 +291,47 @@ export function WeekPlanner({
               ›
             </Link>
           </div>
-          <span className="text-[11px] text-ink-3">
-            {MAX_ENGAGEMENTS_PER_DAY} engagements maximum par jour
-          </span>
+          <div className="flex items-center gap-3">
+            {/* Régime de la semaine */}
+            <div
+              role="group"
+              aria-label="Type de semaine"
+              className="flex rounded-lg border border-line p-0.5"
+            >
+              {(Object.keys(WEEK_KINDS) as WeekKind[]).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setKind(k)}
+                  aria-pressed={kind === k}
+                  title={WEEK_KINDS[k].hint}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                    kind === k
+                      ? k === "vacances"
+                        ? "bg-cat-sante/25 text-cat-sante"
+                        : "bg-violet/25 text-violet-bright"
+                      : "text-ink-3 hover:text-ink-2"
+                  }`}
+                >
+                  <span aria-hidden>{WEEK_KINDS[k].icon}</span>{" "}
+                  {WEEK_KINDS[k].label}
+                </button>
+              ))}
+            </div>
+            <span className="text-[11px] text-ink-3">
+              {MAX_ENGAGEMENTS_PER_DAY} max / jour
+            </span>
+          </div>
         </div>
+
+        {onVacation ? (
+          <p className="mb-3 rounded-xl border border-cat-sante/30 bg-cat-sante/10 px-3 py-2 text-[11px] leading-relaxed text-ink-2">
+            🌴 <strong className="text-cat-sante">Semaine de vacances</strong> —
+            aucun malus, et la série est gelée : elle ne progresse pas, mais
+            elle ne casse pas non plus. Les tâches cochées rapportent
+            normalement. Les journées déjà closes ne sont pas réécrites.
+          </p>
+        ) : null}
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
           {days.map((date, i) => {
@@ -200,15 +343,33 @@ export function WeekPlanner({
             const isPast = date < today;
             const canDrop = Boolean(selected) && free > 0 && !isPast;
 
+            const dropOk = accepts(date);
+            const isOver = over === date && dropOk;
+
             return (
               <div
                 key={date}
-                className={`flex min-h-[210px] flex-col rounded-xl border p-2.5 ${
-                  isToday
-                    ? "border-violet-bright bg-violet/8"
-                    : isPast
-                      ? "border-line-soft bg-panel/40"
-                      : "border-line bg-panel-2/50"
+                onDragOver={(e) => {
+                  if (!dragging || !dropOk) return;
+                  // Sans preventDefault, le navigateur refuse le dépôt.
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  setOver(date);
+                }}
+                onDragLeave={() => setOver((d) => (d === date ? null : d))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const id = e.dataTransfer.getData("text/plain") || dragging;
+                  if (id && dropOk) move(id, date);
+                }}
+                className={`flex min-h-[210px] flex-col rounded-xl border p-2.5 transition-colors ${
+                  isOver
+                    ? "border-violet-bright bg-violet/20 ring-2 ring-violet/40"
+                    : isToday
+                      ? "border-violet-bright bg-violet/8"
+                      : isPast
+                        ? "border-line-soft bg-panel/40"
+                        : "border-line bg-panel-2/50"
                 }`}
               >
                 <div className="mb-2 flex items-baseline justify-between">

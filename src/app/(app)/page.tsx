@@ -12,6 +12,7 @@ import {
   getWeeklyTasks,
 } from "@/lib/queries";
 import { formatLong, startOfWeek, todayISO } from "@/lib/dates";
+import { getWeekKind } from "@/lib/weeks";
 import { DAILY_XP_CAP, isEngagement, RARITY } from "@/lib/gamification";
 
 function QuestRow({
@@ -67,14 +68,15 @@ export default async function Dashboard() {
   const today = todayISO();
   const weekStart = startOfWeek(today);
 
-  const [player, tasks, categories, weekly, history, badges] =
+  const player = await getPlayer();
+  const [tasks, categories, weekly, history, badges, weekKind] =
     await Promise.all([
-      getPlayer(),
       getTasksForDate(today),
       getCategories(),
       getWeeklyTasks(weekStart),
       getHistory(),
       getBadges(),
+      getWeekKind(player.id, weekStart),
     ]);
 
   const engagements = tasks.filter((t) => isEngagement(t.kind));
@@ -190,7 +192,11 @@ export default async function Dashboard() {
         </Card>
 
         <div className="flex flex-col gap-4">
-          <MalusRisk todayTasks={tasks} weeklyPending={weeklyPending} />
+          <MalusRisk
+            todayTasks={tasks}
+            weeklyPending={weeklyPending}
+            weekKind={weekKind}
+          />
 
           <Card>
             <CardTitle right="renouvelées chaque nuit">

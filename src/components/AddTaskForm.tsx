@@ -9,6 +9,11 @@ export function AddTaskForm({
   label,
   placeholder,
   onSubmit,
+  /** Propose la case « chaque semaine » (réserve hebdomadaire seulement). */
+  allowRecurring = false,
+  /** Valeurs de départ : passe le formulaire en mode édition. */
+  initial,
+  onCancel,
 }: {
   categories: CategoryDTO[];
   label: string;
@@ -17,13 +22,26 @@ export function AddTaskForm({
     title: string,
     categorySlug: string,
     difficulty: DifficultyKey,
+    recurring: boolean,
   ) => Promise<void>;
+  allowRecurring?: boolean;
+  initial?: { title: string; slug: string; difficulty: DifficultyKey };
+  onCancel?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState("");
-  const [slug, setSlug] = useState(categories[0]?.slug ?? "");
-  const [difficulty, setDifficulty] = useState<DifficultyKey>("facile");
+  const editing = Boolean(initial);
+  const [open, setOpen] = useState(editing);
+  const [title, setTitle] = useState(initial?.title ?? "");
+  const [slug, setSlug] = useState(initial?.slug ?? categories[0]?.slug ?? "");
+  const [difficulty, setDifficulty] = useState<DifficultyKey>(
+    initial?.difficulty ?? "facile",
+  );
+  const [recurring, setRecurring] = useState(false);
   const [pending, startTransition] = useTransition();
+
+  const close = () => {
+    setOpen(false);
+    onCancel?.();
+  };
 
   if (!open) {
     return (
@@ -40,9 +58,9 @@ export function AddTaskForm({
   const submit = () => {
     if (!title.trim()) return;
     startTransition(async () => {
-      await onSubmit(title, slug, difficulty);
-      setTitle("");
-      setOpen(false);
+      await onSubmit(title, slug, difficulty, recurring);
+      if (!editing) setTitle("");
+      close();
     });
   };
 
@@ -54,7 +72,7 @@ export function AddTaskForm({
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") submit();
-          if (e.key === "Escape") setOpen(false);
+          if (e.key === "Escape") close();
         }}
         placeholder={placeholder}
         aria-label={label}
@@ -89,8 +107,10 @@ export function AddTaskForm({
         ))}
       </div>
 
-      <div className="flex items-center gap-2">
-        <div className="flex gap-1.5">
+      {/* Le formulaire vit dans une colonne de 300 px : sans `flex-wrap`,
+          difficultés et boutons d'action débordent hors de la carte. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap gap-1.5">
           {(Object.keys(DIFFICULTIES) as DifficultyKey[]).map((k) => (
             <button
               key={k}
@@ -114,7 +134,7 @@ export function AddTaskForm({
         <div className="ml-auto flex gap-2">
           <button
             type="button"
-            onClick={() => setOpen(false)}
+            onClick={close}
             className="rounded-lg px-3 py-1.5 text-[12px] text-ink-3 hover:text-ink"
           >
             Annuler
@@ -125,10 +145,27 @@ export function AddTaskForm({
             disabled={pending || !title.trim()}
             className="rounded-lg bg-violet px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-violet-bright disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {pending ? "…" : "Ajouter"}
+            {pending ? "…" : editing ? "Enregistrer" : "Ajouter"}
           </button>
         </div>
       </div>
+
+      {allowRecurring ? (
+        <label className="flex cursor-pointer items-start gap-2 border-t border-line-soft pt-2.5">
+          <input
+            type="checkbox"
+            checked={recurring}
+            onChange={(e) => setRecurring(e.target.checked)}
+            className="mt-0.5 size-3.5 accent-[var(--color-violet)]"
+          />
+          <span>
+            <span className="block text-[12px]">Chaque semaine</span>
+            <span className="block text-[10px] text-ink-3">
+              Revient automatiquement en réserve — plus besoin de la recréer.
+            </span>
+          </span>
+        </label>
+      ) : null}
     </div>
   );
 }

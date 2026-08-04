@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { signOutAction } from "@/app/auth-actions";
 import { titleForLevel } from "@/lib/gamification";
 import type { PlayerDTO } from "@/lib/types";
+import { Avatar } from "./ui";
 
 const NAV = [
   { href: "/", label: "Tableau de bord", icon: "🏠" },
@@ -66,21 +68,33 @@ export function Sidebar({ player }: { player: PlayerDTO }) {
         })}
       </nav>
 
-      <div className="mt-auto rounded-xl border border-line bg-panel-2 p-3">
-        <div className="flex items-center gap-2.5">
-          <span
-            className="grid size-9 place-items-center rounded-full bg-panel-3 text-lg ring-2 ring-violet/40"
-            aria-hidden
-          >
-            {player.avatar}
-          </span>
+      <div className="mt-auto flex flex-col gap-2">
+        <Link
+          href="/profil"
+          aria-current={pathname === "/profil" ? "page" : undefined}
+          className={`flex items-center gap-2.5 rounded-xl border p-3 transition-colors ${
+            pathname === "/profil"
+              ? "border-violet/40 bg-violet/12"
+              : "border-line bg-panel-2 hover:border-violet/35"
+          }`}
+        >
+          <Avatar photo={player.photo} emoji={player.avatar} size={36} />
           <div className="min-w-0">
             <div className="truncate text-sm font-medium">{player.name}</div>
             <div className="truncate text-[11px] text-ink-3">
               Nv.{player.level} · {titleForLevel(player.level)}
             </div>
           </div>
-        </div>
+        </Link>
+
+        <form action={signOutAction}>
+          <button
+            type="submit"
+            className="w-full rounded-lg px-3 py-2 text-left text-[12px] text-ink-3 transition-colors hover:bg-panel-2 hover:text-ink"
+          >
+            ⏻ Se déconnecter
+          </button>
+        </form>
       </div>
     </aside>
   );

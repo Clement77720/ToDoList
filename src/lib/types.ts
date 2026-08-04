@@ -48,7 +48,10 @@ export type CategoryDTO = CategoryRef & {
 export type PlayerDTO = {
   id: string;
   name: string;
+  email: string;
   avatar: string;
+  /** Data URI, ou null si le joueur s'en tient à son emoji. */
+  photo: string | null;
   level: number;
   xp: number;
   xpMax: number;

@@ -4,7 +4,7 @@ Guide de travail pour ce dépôt. Le [README](README.md) explique le *produit* e
 les règles du jeu ; ce fichier décrit comment y toucher sans rien casser.
 
 **QuestList** — to-do list gamifiée. Next.js 16 (App Router) · React 19 ·
-Tailwind 4 · Prisma 7 · PostgreSQL. Mono-utilisateur, pas d'authentification.
+Tailwind 4 · Prisma 7 · PostgreSQL. Multi-utilisateurs (email + mot de passe).
 Interface, commentaires et vocabulaire métier sont **en français** : garder
 cette langue dans tout nouveau code.
 
@@ -40,7 +40,8 @@ imports `@/generated/prisma/client` échouent.
 
 | Règle | Où |
 |---|---|
-| Toutes les mutations sont des Server Actions | `src/app/actions.ts`, un seul fichier |
+| Toutes les mutations sont des Server Actions | `src/app/actions.ts` (métier) et `auth-actions.ts` (comptes) |
+| Les écrans protégés vivent sous `(app)/`, la connexion sous `(auth)/` | la garde est dans le layout, pas dans les pages |
 | Toutes les lectures serveur passent par des DTO plats | `src/lib/queries.ts` → `src/lib/types.ts` |
 | **Aucun objet Prisma ne traverse la frontière serveur/client** | les composants ne reçoivent que des DTO |
 | `db.ts`, `queries.ts`, `rollover.ts` sont marqués `server-only` | ne jamais les importer d'un composant client |
@@ -61,13 +62,29 @@ La mise à jour optimiste vit côté client (`useOptimistic` dans `TodayTasks`,
 `WeekPlanner`, `RoutinesEditor`). Si tu ajoutes une action mutative visible
 immédiatement, prévois le pendant optimiste, sinon la coche « clignote ».
 
-### `getCurrentUser()` — la couture de l'authentification
+### Authentification
 
-`src/lib/queries.ts`. Prend le premier `User` de la base — en l'amorçant via
-`bootstrapUser()` s'il n'y en a pas — puis déclenche `ensureRollover()`.
-Enveloppée dans `cache()` : dédupliquée sur une requête, donc le rollover ne
-tourne qu'une fois. **C'est le seul point à changer le jour de
-l'authentification** — tout le reste travaille déjà à partir d'un `userId`.
+Email + mot de passe, sans dépendance externe :
+
+| Fichier | Rôle |
+|---|---|
+| `src/lib/password.ts` | scrypt (stdlib Node), sel par compte, comparaison en temps constant. **Pas `server-only`** — le seed en a besoin |
+| `src/lib/auth.ts` | sessions : jeton aléatoire de 32 octets en cookie `httpOnly` + `sameSite: lax` |
+| `src/app/auth-actions.ts` | inscription, connexion, déconnexion, profil |
+| `src/lib/bootstrap.ts` | `createUserWithDefaults()` — catégories, routines et boutique à l'inscription |
+
+`getSessionUser()` renvoie le compte connecté ou `null` ; `getCurrentUser()`
+redirige vers `/connexion` s'il n'y en a pas. Les deux vivent dans
+`queries.ts` et déclenchent `ensureRollover()` au passage, dédupliqué par
+`cache()`.
+
+La garde d'accès est **dans `(app)/layout.tsx`**, pas dans chaque page : une
+page ajoutée plus tard est protégée d'office. `(auth)/layout.tsx` fait
+l'inverse et renvoie un visiteur déjà connecté vers l'accueil.
+
+Le message d'échec de connexion est volontairement le même pour un email
+inconnu et un mot de passe faux — les distinguer permettrait d'énumérer les
+comptes.
 
 ## Modèle de données
 
@@ -103,6 +120,27 @@ Deux garde-fous d'idempotence, **à ne jamais contourner** :
 `User.lastRollover` (un jour n'est clos qu'une fois) et `Task.malusApplied`
 (une tâche n'est débitée qu'une fois). Rattrapage plafonné à
 `MAX_CATCHUP_DAYS = 120` jours.
+
+La boucle clôt les jours de `today - gap` à **hier inclus**. L'index est
+délicat : une version antérieure itérait `addDays(today, -(gap - i))` sur
+`i` de 1 à `gap` et ne clôturait jamais la veille quand `gap = 1` — soit le
+cas de tous les jours pour qui ouvre l'application quotidiennement. Les
+malus ne tombaient donc qu'après deux jours d'absence. Toute modification
+de cette boucle doit être vérifiée avec `lastRollover = hier`.
+
+### Régime de semaine
+
+`WeekSetting` n'existe **que** pour les semaines mises en vacances : pas de
+ligne = « normale ». Une semaine de vacances ne débite rien et **gèle la
+série** (ni progression, ni rupture, ni joker consommé). Les tâches oubliées
+y sont tout de même marquées `malusApplied` : elles sont *soldées*, donc
+repasser la semaine en « normale » plus tard ne peut pas les débiter
+rétroactivement.
+
+Trois endroits doivent rester d'accord : `closeDay`/`closeWeek`
+(`rollover.ts`), `applyTonightMalusAction` (`actions.ts`) et l'affichage
+(`MalusRisk`, `WeekPlanner`). Les libellés sont dans `gamification.ts` —
+`weeks.ts` est `server-only` et les composants clients en ont besoin.
 
 ## Où changer quoi
 
@@ -174,17 +212,14 @@ suit tout seul. `DATABASE_URL` se définit dans les variables d'environnement
 Vercel, avec la connection string **poolée** de Neon (hôte en `-pooler`) —
 sans elle, les pools des instances serverless épuisent les connexions.
 
-Aucune étape d'amorçage manuel : une base vide se voit créer son compte et les
-valeurs par défaut de `catalog.ts` au premier chargement (`bootstrap.ts`, verrou
-consultatif Postgres pour que des instances concurrentes n'en créent qu'un).
+Aucune étape d'amorçage manuel : chaque inscription crée le compte et ses
+valeurs par défaut issues de `catalog.ts` (`bootstrap.ts`, en une transaction).
 `npm run db:seed` reste réservé au local — il **efface tout** et rejoue six mois
 d'historique fictif.
 
-Deux chantiers restent ouverts avant une mise en ligne publique :
+Un chantier reste ouvert :
 
-1. **L'authentification.** Sans elle, tout visiteur partage le compte unique.
-   Garder le déploiement protégé par mot de passe en attendant.
-2. **Le rollover en cron.** Il est déclenché par la première requête du jour ;
+1. **Le rollover en cron.** Il est déclenché par la première requête du jour ;
    en serverless, deux requêtes concurrentes peuvent entrer ensemble dans
    `ensureRollover()` — la garde `lastRollover` est lue au début et écrite à la
    fin — et appliquer deux fois malus et XP. Un Vercel Cron quotidien règle le
