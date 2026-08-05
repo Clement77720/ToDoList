@@ -1,13 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { formatLong, formatMonthYear } from "@/lib/dates";
+import { formatLong, formatMonthYear, startOfWeek } from "@/lib/dates";
 import type { CategoryDTO, DayDTO, TaskDTO } from "@/lib/types";
 import { TaskList } from "./TaskList";
 import { TodayTasks } from "./TodayTasks";
 import { Card, CardTitle } from "./ui";
 
+/* Deux rampes, mêmes clartés OKLCH — seule la teinte change, si bien
+   qu'une semaine de vacances se lit exactement comme une normale, mais
+   ne se confond jamais avec elle. Dérivées au calcul, cf. globals.css. */
 const RAMP = ["#4A3A94", "#6248C4", "#7F63E2", "#A288F2", "#C6B0FF"];
+const RAMP_VACANCES = ["#025B3E", "#017651", "#069467", "#0DB981", "#76D6AA"];
 const WEEKDAYS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 
 /** Jours du mois affiché, calés sur une grille commençant le lundi. */
@@ -28,10 +32,10 @@ function buildGrid(year: number, month: number) {
   });
 }
 
-function rampFor(ratio: number) {
+function rampFor(ratio: number, vacances = false) {
   const i =
     ratio >= 1 ? 4 : ratio > 0.75 ? 3 : ratio > 0.5 ? 2 : ratio > 0.25 ? 1 : 0;
-  return RAMP[i];
+  return (vacances ? RAMP_VACANCES : RAMP)[i];
 }
 
 const monthParam = (year: number, month: number) =>
@@ -46,6 +50,7 @@ function DayCell({
   today,
   selected,
   href,
+  vacances,
 }: {
   date: string;
   day: number;
@@ -55,10 +60,12 @@ function DayCell({
   today: string;
   selected: boolean;
   href: string;
+  /** Le jour appartient à une semaine mise en vacances. */
+  vacances: boolean;
 }) {
   const isToday = date === today;
   const isFuture = date > today;
-  const tint = record && record.done > 0 ? rampFor(record.ratio) : null;
+  const tint = record && record.done > 0 ? rampFor(record.ratio, vacances) : null;
 
   return (
     <Link
@@ -76,20 +83,28 @@ function DayCell({
         inMonth ? "" : "opacity-35"
       } ${
         selected
-          ? "border-violet-bright ring-2 ring-violet/45"
-          : "border-line hover:border-violet/40"
+          ? vacances
+            ? "border-vac-5 ring-2 ring-vac-4/50"
+            : "border-violet-bright ring-2 ring-violet/45"
+          : vacances
+            ? "border-vac-4/40 hover:border-vac-4"
+            : "border-line hover:border-violet/40"
       }`}
       style={{
         background: tint
           ? `color-mix(in oklab, ${tint} 26%, var(--color-panel))`
-          : "var(--color-panel)",
+          : vacances
+            ? "color-mix(in oklab, var(--color-vac-1) 12%, var(--color-panel))"
+            : "var(--color-panel)",
       }}
     >
       <span className="flex items-center justify-between">
         <span
           className={`text-[13px] font-semibold tabular-nums ${
             isToday
-              ? "grid size-6 place-items-center rounded-full bg-violet text-white"
+              ? `grid size-6 place-items-center rounded-full text-white ${
+                  vacances ? "bg-vac-3" : "bg-violet"
+                }`
               : record?.perfect
                 ? "text-gold"
                 : "text-ink-2"
@@ -129,7 +144,7 @@ function DayCell({
                 style={{
                   background:
                     i < record.done
-                      ? rampFor(record.ratio)
+                      ? rampFor(record.ratio, vacances)
                       : "var(--color-panel-3)",
                 }}
               />
@@ -157,6 +172,7 @@ export function CalendarView({
   selectedTasks,
   streak,
   categories,
+  vacationWeeks,
 }: {
   year: number;
   month: number;
@@ -167,7 +183,12 @@ export function CalendarView({
   selectedTasks: TaskDTO[];
   streak: number;
   categories: CategoryDTO[];
+  /** Lundis des semaines mises en vacances. */
+  vacationWeeks: string[];
 }) {
+  const vacances = new Set(vacationWeeks);
+  const enVacances = (date: string) => vacances.has(startOfWeek(date));
+
   const grid = buildGrid(year, month);
   const prev = new Date(Date.UTC(year, month - 1, 1));
   const next = new Date(Date.UTC(year, month + 1, 1));
@@ -253,6 +274,7 @@ export function CalendarView({
               planned={planned[g.date] ?? 0}
               selected={g.date === selected}
               href={`/calendrier?m=${monthParam(year, month)}&d=${g.date}`}
+              vacances={enVacances(g.date)}
             />
           ))}
         </div>
@@ -274,6 +296,20 @@ export function CalendarView({
               −{monthMalus.toLocaleString("fr-FR")}
             </strong>
           </span>
+
+          {/* Sans légende, le vert reste indéchiffrable pour qui n'a pas
+              lui-même basculé la semaine. On ne l'affiche que s'il y a
+              quelque chose à expliquer. */}
+          {grid.some((g) => g.inMonth && enVacances(g.date)) ? (
+            <span className="flex items-center gap-1.5 text-ink-3">
+              <span
+                aria-hidden
+                className="size-2.5 rounded-full"
+                style={{ background: "var(--color-vac-4)" }}
+              />
+              Semaine de vacances — aucun malus
+            </span>
+          ) : null}
         </div>
       </Card>
 

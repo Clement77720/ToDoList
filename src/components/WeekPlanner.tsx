@@ -35,7 +35,7 @@ export function WeekPlanner({
   today,
   routines,
   weekly,
-  materialized,
+  daily,
   categories,
   weekKind,
 }: {
@@ -43,8 +43,8 @@ export function WeekPlanner({
   today: string;
   routines: RoutineDTO[];
   weekly: TaskDTO[];
-  /** Quotidiennes déjà créées en base, par date. */
-  materialized: Record<string, number>;
+  /** Quotidiennes réellement créées en base — elles portent l'état « faite ». */
+  daily: TaskDTO[];
   categories: CategoryDTO[];
   weekKind: WeekKind;
 }) {
@@ -69,9 +69,10 @@ export function WeekPlanner({
   const atRisk = onVacation ? 0 : pending.length * MALUS.hebdomadaire;
 
   const routinesFor = (dow: number) => routines.filter((r) => r.days.includes(dow));
+  const dailyFor = (date: string) => daily.filter((t) => t.date === date);
 
   const occupancy = (date: string) =>
-    Math.max(routinesFor(isoWeekday(date)).length, materialized[date] ?? 0) +
+    Math.max(routinesFor(isoWeekday(date)).length, dailyFor(date).length) +
     tasks.filter((t) => t.date === date).length;
 
   const move = (id: string, date: string | null) => {
@@ -112,6 +113,30 @@ export function WeekPlanner({
   /** Un jour accepte-t-il encore un dépôt ? */
   const accepts = (date: string) =>
     date >= today && MAX_ENGAGEMENTS_PER_DAY - occupancy(date) > 0;
+
+  /* ── Habillage ──────────────────────────────────────────────────
+     Une semaine de vacances bascule sur la rampe verte : c'est le seul
+     signal qui distingue les deux régimes une fois la page défilée.
+     La teinte du « fait » suit, sinon un coche vert sur fond vert
+     disparaîtrait. Le reste de la grille est identique — même densité,
+     mêmes places : seule la couleur change.
+     ────────────────────────────────────────────────────────────── */
+  const doneClasses = onVacation
+    ? "border-vac-5/45 bg-vac-5/12 text-ink-3"
+    : "border-cat-sante/35 bg-cat-sante/10 text-ink-3";
+  const checkClass = onVacation ? "text-vac-5" : "text-cat-sante";
+  const placedClasses = onVacation
+    ? "border-vac-4/45 bg-vac-4/15"
+    : "border-violet/35 bg-violet/12";
+  const todayCell = onVacation
+    ? "border-vac-4 bg-vac-4/10"
+    : "border-violet-bright bg-violet/8";
+  const overCell = onVacation
+    ? "border-vac-5 bg-vac-4/25 ring-2 ring-vac-4/45"
+    : "border-violet-bright bg-violet/20 ring-2 ring-violet/40";
+  const dropZone = onVacation
+    ? "border-vac-5 bg-vac-4/20 text-vac-5 hover:bg-vac-4/30"
+    : "border-violet-bright bg-violet/15 text-violet-bright hover:bg-violet/25";
 
   const isCurrentWeek = today >= weekStart && today <= days[6];
 
@@ -242,12 +267,26 @@ export function WeekPlanner({
           </p>
         </Card>
 
-        <Card className={atRisk > 0 ? "border-fire/35" : "border-cat-sante/30"}>
-          <CardTitle right="dimanche soir">En jeu cette semaine</CardTitle>
+        <Card
+          className={
+            onVacation
+              ? "border-vac-4/45"
+              : atRisk > 0
+                ? "border-fire/35"
+                : "border-cat-sante/30"
+          }
+        >
+          <CardTitle right={onVacation ? "🌴 rien en jeu" : "dimanche soir"}>
+            En jeu cette semaine
+          </CardTitle>
           <div className="flex items-baseline gap-2">
             <span
               className={`text-2xl font-bold tabular-nums ${
-                atRisk > 0 ? "text-fire" : "text-cat-sante"
+                onVacation
+                  ? "text-vac-5"
+                  : atRisk > 0
+                    ? "text-fire"
+                    : "text-cat-sante"
               }`}
             >
               {atRisk > 0 ? `−${atRisk} XP` : "0 XP"}
@@ -265,7 +304,7 @@ export function WeekPlanner({
       </div>
 
       {/* Les 7 jours */}
-      <Card>
+      <Card className={onVacation ? "border-vac-4/45" : ""}>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Link
@@ -296,7 +335,9 @@ export function WeekPlanner({
             <div
               role="group"
               aria-label="Type de semaine"
-              className="flex rounded-lg border border-line p-0.5"
+              className={`flex rounded-lg border p-0.5 ${
+                onVacation ? "border-vac-4/45" : "border-line"
+              }`}
             >
               {(Object.keys(WEEK_KINDS) as WeekKind[]).map((k) => (
                 <button
@@ -308,7 +349,7 @@ export function WeekPlanner({
                   className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
                     kind === k
                       ? k === "vacances"
-                        ? "bg-cat-sante/25 text-cat-sante"
+                        ? "bg-vac-4/30 text-vac-5"
                         : "bg-violet/25 text-violet-bright"
                       : "text-ink-3 hover:text-ink-2"
                   }`}
@@ -325,8 +366,8 @@ export function WeekPlanner({
         </div>
 
         {onVacation ? (
-          <p className="mb-3 rounded-xl border border-cat-sante/30 bg-cat-sante/10 px-3 py-2 text-[11px] leading-relaxed text-ink-2">
-            🌴 <strong className="text-cat-sante">Semaine de vacances</strong> —
+          <p className="mb-3 rounded-xl border border-vac-4/40 bg-vac-4/12 px-3 py-2 text-[11px] leading-relaxed text-ink-2">
+            🌴 <strong className="text-vac-5">Semaine de vacances</strong> —
             aucun malus, et la série est gelée : elle ne progresse pas, mais
             elle ne casse pas non plus. Les tâches cochées rapportent
             normalement. Les journées déjà closes ne sont pas réécrites.
@@ -336,6 +377,7 @@ export function WeekPlanner({
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
           {days.map((date, i) => {
             const dayRoutines = routinesFor(isoWeekday(date));
+            const dayDaily = dailyFor(date);
             const placed = tasks.filter((t) => t.date === date);
             const used = occupancy(date);
             const free = MAX_ENGAGEMENTS_PER_DAY - used;
@@ -364,9 +406,9 @@ export function WeekPlanner({
                 }}
                 className={`flex min-h-[210px] flex-col rounded-xl border p-2.5 transition-colors ${
                   isOver
-                    ? "border-violet-bright bg-violet/20 ring-2 ring-violet/40"
+                    ? overCell
                     : isToday
-                      ? "border-violet-bright bg-violet/8"
+                      ? todayCell
                       : isPast
                         ? "border-line-soft bg-panel/40"
                         : "border-line bg-panel-2/50"
@@ -375,7 +417,11 @@ export function WeekPlanner({
                 <div className="mb-2 flex items-baseline justify-between">
                   <span
                     className={`text-[12px] font-semibold ${
-                      isToday ? "text-violet-bright" : "text-ink-2"
+                      isToday
+                        ? onVacation
+                          ? "text-vac-5"
+                          : "text-violet-bright"
+                        : "text-ink-2"
                     }`}
                   >
                     {WEEKDAY_SHORT[i]} {dayOfMonth(date)}
@@ -390,24 +436,55 @@ export function WeekPlanner({
                 </div>
 
                 <ul className="flex flex-col gap-1.5">
-                  {dayRoutines.map((r) => (
-                    <li
-                      key={r.id}
-                      className="flex items-center gap-1.5 rounded-lg border border-line-soft bg-panel/60 px-2 py-1.5 text-[11px] text-ink-3"
-                      title="Routine récurrente — non déplaçable"
-                    >
-                      <span aria-hidden>{TASK_KINDS.quotidienne.icon}</span>
-                      <span className="min-w-0 flex-1 truncate">{r.title}</span>
-                    </li>
-                  ))}
+                  {/* Les quotidiennes réellement créées portent l'état
+                      « faite » ; on ne retombe sur la projection des
+                      routines que pour les jours pas encore matérialisés. */}
+                  {dayDaily.length > 0
+                    ? dayDaily.map((t) => (
+                        <li
+                          key={t.id}
+                          className={`flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11px] ${
+                            t.done
+                              ? doneClasses
+                              : "border-line-soft bg-panel/60 text-ink-3"
+                          }`}
+                          title={
+                            t.done
+                              ? `${t.title} — faite`
+                              : "Routine récurrente — non déplaçable"
+                          }
+                        >
+                          <span aria-hidden>{TASK_KINDS.quotidienne.icon}</span>
+                          <span
+                            className={`min-w-0 flex-1 truncate ${
+                              t.done ? "line-through" : ""
+                            }`}
+                          >
+                            {t.title}
+                          </span>
+                          {t.done ? (
+                            <span aria-hidden className={checkClass}>
+                              ✓
+                            </span>
+                          ) : null}
+                        </li>
+                      ))
+                    : dayRoutines.map((r) => (
+                        <li
+                          key={r.id}
+                          className="flex items-center gap-1.5 rounded-lg border border-line-soft bg-panel/60 px-2 py-1.5 text-[11px] text-ink-3"
+                          title="Routine récurrente — non déplaçable"
+                        >
+                          <span aria-hidden>{TASK_KINDS.quotidienne.icon}</span>
+                          <span className="min-w-0 flex-1 truncate">{r.title}</span>
+                        </li>
+                      ))}
 
                   {placed.map((w) => (
                     <li key={w.id}>
                       <div
                         className={`flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11px] ${
-                          w.done
-                            ? "border-cat-sante/35 bg-cat-sante/10 text-ink-3"
-                            : "border-violet/35 bg-violet/12"
+                          w.done ? doneClasses : placedClasses
                         }`}
                       >
                         <span
@@ -423,7 +500,7 @@ export function WeekPlanner({
                           {w.title}
                         </span>
                         {w.done ? (
-                          <span aria-hidden className="text-cat-sante">
+                          <span aria-hidden className={checkClass}>
                             ✓
                           </span>
                         ) : isPast ? null : (
@@ -446,7 +523,7 @@ export function WeekPlanner({
                     <button
                       type="button"
                       onClick={() => move(selected!, date)}
-                      className="anim-pop-in w-full rounded-lg border border-dashed border-violet-bright bg-violet/15 py-2 text-[11px] font-semibold text-violet-bright transition-colors hover:bg-violet/25"
+                      className={`anim-pop-in w-full rounded-lg border border-dashed py-2 text-[11px] font-semibold transition-colors ${dropZone}`}
                     >
                       ＋ placer ici
                     </button>
