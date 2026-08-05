@@ -37,6 +37,17 @@
   --color-seq-4: #a288f2;
   --color-seq-5: #c6b0ff;
 
+  /* Rampe des semaines de vacances.
+     Dérivée de la violette, pas choisie à l'œil : mêmes clartés OKLCH
+     (0,418 → 0,805, strictement croissantes), teinte de `cat-sante`
+     (h ≈ 163°), chroma ramené dans le gamut sRGB là où il débordait.
+     Les deux rampes se lisent donc identiquement, seule la teinte change. */
+  --color-vac-1: #025b3e;
+  --color-vac-2: #017651;
+  --color-vac-3: #069467;
+  --color-vac-4: #0db981;
+  --color-vac-5: #76d6aa;
+
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
 }

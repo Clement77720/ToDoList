@@ -9,6 +9,7 @@ import {
   getToday,
 } from "@/lib/queries";
 import { addDays } from "@/lib/dates";
+import { vacationWeekStarts } from "@/lib/weeks";
 
 export const metadata = { title: "Calendrier — QuestList" };
 
@@ -37,6 +38,11 @@ export default async function CalendrierPage({
       getPlayer(),
     ]);
 
+  // La grille déborde du mois des deux côtés : on récupère tous les lundis
+  // mis en vacances, puis le composant compare chaque jour à son propre
+  // lundi. Passer un ensemble complet évite un aller-retour par semaine.
+  const vacationWeeks = [...(await vacationWeekStarts(player.id))];
+
   return (
     <>
       <PageHeader
@@ -53,6 +59,7 @@ export default async function CalendrierPage({
         selectedTasks={selectedTasks}
         streak={player.streak}
         categories={categories}
+        vacationWeeks={vacationWeeks}
       />
     </>
   );

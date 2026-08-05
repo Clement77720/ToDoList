@@ -11,6 +11,8 @@ import {
 } from "@/lib/queries";
 import { startOfWeek, weekDates } from "@/lib/dates";
 import { getWeekKind } from "@/lib/weeks";
+import type { DifficultyKey, TaskKind } from "@/lib/gamification";
+import type { TaskDTO } from "@/lib/types";
 
 export const metadata = { title: "Ma semaine — QuestList" };
 
@@ -34,19 +36,40 @@ export default async function SemainePage({
     getWeekKind(user.id, weekStart),
   ]);
 
-  // Quotidiennes déjà créées en base pour cette semaine : elles priment
-  // sur les routines actuelles, car le passé ne se réécrit pas.
-  const rows = await prisma.task.groupBy({
-    by: ["date"],
+  // Quotidiennes déjà créées en base pour cette semaine. Elles priment sur
+  // la projection des routines — le passé ne se réécrit pas — et ce sont
+  // elles qui portent l'état « faite », que la projection ignore.
+  const rows = await prisma.task.findMany({
     where: {
       userId: user.id,
       kind: "quotidienne",
       date: { gte: days[0], lte: days[6] },
     },
-    _count: { _all: true },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      title: true,
+      difficulty: true,
+      kind: true,
+      date: true,
+      weekStart: true,
+      done: true,
+      time: true,
+      category: { select: { slug: true, label: true, icon: true, color: true } },
+    },
   });
-  const materialized: Record<string, number> = {};
-  for (const r of rows) if (r.date) materialized[r.date] = r._count._all;
+
+  const daily: TaskDTO[] = rows.map((t) => ({
+    id: t.id,
+    title: t.title,
+    difficulty: t.difficulty as DifficultyKey,
+    kind: t.kind as TaskKind,
+    date: t.date,
+    weekStart: t.weekStart,
+    done: t.done,
+    time: t.time,
+    category: t.category,
+  }));
 
   return (
     <>
@@ -59,7 +82,7 @@ export default async function SemainePage({
         today={today}
         routines={routines}
         weekly={weekly}
-        materialized={materialized}
+        daily={daily}
         categories={categories}
         weekKind={weekKind}
       />
