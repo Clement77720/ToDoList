@@ -5,6 +5,7 @@ import {
   getMonth,
   getPlannedCounts,
   getPlayer,
+  getProjectedDailies,
   getTasksForDate,
   getToday,
 } from "@/lib/queries";
@@ -29,14 +30,19 @@ export default async function CalendrierPage({
   const first = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
   const last = new Date(Date.UTC(year, month + 1, 0)).toISOString().slice(0, 10);
 
-  const [records, planned, selectedTasks, categories, player] =
+  const [records, planned, reelles, projetees, categories, player] =
     await Promise.all([
       getMonth(year, month),
       getPlannedCounts(addDays(first, -7), addDays(last, 7)),
       getTasksForDate(selected),
+      getProjectedDailies(selected),
       getCategories(),
       getPlayer(),
     ]);
+
+  // Un jour à venir n'a pas encore ses quotidiennes en base : on complète
+  // par la projection des routines, sinon l'encart de droite paraît vide.
+  const selectedTasks = [...projetees, ...reelles];
 
   // La grille déborde du mois des deux côtés : on récupère tous les lundis
   // mis en vacances, puis le composant compare chaque jour à son propre

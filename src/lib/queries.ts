@@ -305,6 +305,8 @@ export async function getPlannedCounts(
   to: string,
 ): Promise<Record<string, number>> {
   const u = await getCurrentUser();
+  const today = await getToday();
+
   const rows = await prisma.task.groupBy({
     by: ["date"],
     where: { userId: u.id, date: { gte: from, lte: to } },
@@ -312,7 +314,81 @@ export async function getPlannedCounts(
   });
   const out: Record<string, number> = {};
   for (const r of rows) if (r.date) out[r.date] = r._count._all;
+
+  // Les quotidiennes d'un jour futur n'existent pas encore en base : le
+  // rollover ne les crée que le jour venu. Sans cette projection, le
+  // calendrier annonce « 1 prévue » là où trois engagements attendent.
+  const routines = await prisma.routine.findMany({
+    where: { userId: u.id, active: true },
+    select: { days: true },
+  });
+  const parJour = new Map<number, number>();
+  for (const r of routines) {
+    for (const d of r.days.split(",").filter(Boolean).map(Number)) {
+      parJour.set(d, (parJour.get(d) ?? 0) + 1);
+    }
+  }
+
+  for (let date = from; date <= to; date = addDays(date, 1)) {
+    if (date <= today) continue;
+    out[date] = (out[date] ?? 0) + (parJour.get(isoWeekday(date)) ?? 0);
+  }
   return out;
+}
+
+/**
+ * Quotidiennes *prévues* un jour à venir.
+ *
+ * Même raison : elles ne sont matérialisées que le jour venu, alors que
+ * les routines disent déjà lesquelles s'appliqueront. Les projeter évite
+ * qu'un écran de planification mente par omission.
+ *
+ * Ce sont des DTO synthétiques, jamais persistés — leur `id` est préfixé
+ * pour qu'on ne puisse pas les confondre avec une vraie tâche, ni les
+ * cocher : les listes d'un jour futur sont en lecture seule.
+ */
+export async function getProjectedDailies(date: string): Promise<TaskDTO[]> {
+  const u = await getCurrentUser();
+  if (date <= (await getToday())) return [];
+
+  const dow = isoWeekday(date);
+  const [routines, existing] = await Promise.all([
+    prisma.routine.findMany({
+      where: { userId: u.id, active: true },
+      orderBy: { order: "asc" },
+      select: {
+        id: true,
+        title: true,
+        difficulty: true,
+        days: true,
+        time: true,
+        category: { select: { slug: true, label: true, icon: true, color: true } },
+      },
+    }),
+    prisma.task.findMany({
+      where: { userId: u.id, date, kind: "quotidienne" },
+      select: { routineId: true },
+    }),
+  ]);
+  const already = new Set(existing.map((t) => t.routineId));
+
+  return routines
+    .filter(
+      (r) =>
+        !already.has(r.id) &&
+        r.days.split(",").filter(Boolean).map(Number).includes(dow),
+    )
+    .map((r) => ({
+      id: `projection:${r.id}`,
+      title: r.title,
+      difficulty: r.difficulty as DifficultyKey,
+      kind: "quotidienne" as TaskKind,
+      date,
+      weekStart: null,
+      done: false,
+      time: r.time,
+      category: r.category,
+    }));
 }
 
 export const getRewards = cache(async (): Promise<RewardDTO[]> => {
