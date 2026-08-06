@@ -8,6 +8,13 @@ import { addDays, isoWeekday, startOfWeek, todayISOIn } from "./dates";
 import { BADGES, categoryXpToNext } from "./catalog";
 import type { ChestTier, RewardFamily } from "./catalog";
 import {
+  MARKET,
+  offreDuJour,
+  prixEffectif,
+  tendance,
+  type EtatMarche,
+} from "./market";
+import {
   DIFFICULTIES,
   isEngagement,
   MALUS,
@@ -392,24 +399,115 @@ export async function getProjectedDailies(date: string): Promise<TaskDTO[]> {
     }));
 }
 
+type LigneMarche = { id: string; createdAt: Date };
+
+/**
+ * Demande observée pour chaque récompense : nombre d'achats dans la
+ * fenêtre, et ancienneté du dernier achat — à défaut, de l'entrée en
+ * boutique, pour qu'une récompense jamais achetée finisse par se solder.
+ */
+async function etatsDuMarche(
+  userId: string,
+  rows: LigneMarche[],
+): Promise<Map<string, EtatMarche>> {
+  const depuis = new Date(Date.now() - MARKET.FENETRE_JOURS * 86_400_000);
+  const [recents, derniers] = await Promise.all([
+    prisma.purchase.groupBy({
+      by: ["rewardId"],
+      where: { userId, at: { gte: depuis } },
+      _count: { _all: true },
+    }),
+    prisma.purchase.groupBy({
+      by: ["rewardId"],
+      where: { userId },
+      _max: { at: true },
+    }),
+  ]);
+
+  const nb = new Map(recents.map((r) => [r.rewardId, r._count._all]));
+  const dernier = new Map(derniers.map((r) => [r.rewardId, r._max.at]));
+  const jours = (d: Date) => Math.floor((Date.now() - d.getTime()) / 86_400_000);
+
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      {
+        achatsRecents: nb.get(r.id) ?? 0,
+        joursDepuisAchat: jours(dernier.get(r.id) ?? r.createdAt),
+        enPromo: false,
+      },
+    ]),
+  );
+}
+
+/**
+ * Prix réellement dû pour une récompense, marché et offre du jour compris.
+ *
+ * **Les Server Actions doivent débiter ce prix**, jamais celui de la base :
+ * afficher un prix soldé puis en débiter un autre serait le pire défaut
+ * possible d'un marché.
+ */
+export async function prixDeVente(
+  userId: string,
+  rewardId: string,
+): Promise<number | null> {
+  const reward = await prisma.reward.findFirst({
+    where: { id: rewardId, userId },
+  });
+  if (!reward) return null;
+
+  const [etats, eligibles] = await Promise.all([
+    etatsDuMarche(userId, [reward]),
+    prisma.reward.findMany({
+      where: { userId, chestTier: null },
+      select: { id: true },
+    }),
+  ]);
+  const promoId = offreDuJour(
+    `${userId}:${todayISOIn((await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { timezone: true } })).timezone)}`,
+    eligibles.map((r) => r.id),
+  );
+
+  return prixEffectif(reward.price, {
+    ...etats.get(reward.id)!,
+    enPromo: reward.id === promoId,
+  });
+}
+
 export const getRewards = cache(async (): Promise<RewardDTO[]> => {
   const u = await getCurrentUser();
+  const today = await getToday();
   const rows = await prisma.reward.findMany({
     where: { userId: u.id },
     orderBy: { order: "asc" },
   });
-  return rows.map((r) => ({
-    id: r.id,
-    label: r.label,
-    icon: r.icon,
-    price: r.price,
-    kind: r.kind as "reel" | "cosmetique",
-    family: r.family as RewardFamily,
-    chestTier: (r.chestTier as ChestTier | null) ?? null,
-    note: r.note,
-    owned: r.owned,
-    wonAgoMs: r.wonAt ? Date.now() - r.wonAt.getTime() : null,
-  }));
+
+  const etats = await etatsDuMarche(u.id, rows);
+
+  // L'offre du jour ne porte jamais sur un coffre : son prix commande le
+  // palier du tirage, le solder fausserait le pari.
+  const eligibles = rows.filter((r) => !r.chestTier).map((r) => r.id);
+  const promoId = offreDuJour(`${u.id}:${today}`, eligibles);
+
+  return rows.map((r) => {
+    const etat = { ...etats.get(r.id)!, enPromo: r.id === promoId };
+    const price = prixEffectif(r.price, etat);
+    return {
+      id: r.id,
+      label: r.label,
+      icon: r.icon,
+      price,
+      basePrice: r.price,
+      promo: etat.enPromo,
+      tendance: tendance(r.price, prixEffectif(r.price, { ...etat, enPromo: false })),
+      kind: r.kind as "reel" | "cosmetique",
+      family: r.family as RewardFamily,
+      chestTier: (r.chestTier as ChestTier | null) ?? null,
+      note: r.note,
+      owned: r.owned,
+      wonAgoMs: r.wonAt ? Date.now() - r.wonAt.getTime() : null,
+    };
+  });
 });
 
 /* ── Badges ─────────────────────────────────────────────────── */

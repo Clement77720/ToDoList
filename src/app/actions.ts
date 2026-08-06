@@ -2,7 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
-import { getCurrentUser, getToday, grantEarnedBadges } from "@/lib/queries";
+import {
+  getCurrentUser,
+  getToday,
+  grantEarnedBadges,
+  prixDeVente,
+} from "@/lib/queries";
 import { applyXpDelta, materializeRoutines } from "@/lib/rollover";
 import {
   categoryXpToNext,
@@ -373,23 +378,29 @@ export async function buyRewardAction(
   if (!reward) return { ok: false, error: "Récompense introuvable." };
   if (reward.chestTier) return openChestAction(rewardId);
   if (reward.owned) return { ok: false, error: "Déjà remportée — profites-en." };
-  if (user.coins < reward.price) {
-    return { ok: false, error: "Pas assez de pièces." };
-  }
+
+  // Le prix du marché, jamais celui de la base : afficher un prix soldé
+  // puis en débiter un autre serait le pire défaut possible d'un marché.
+  const prix = (await prixDeVente(user.id, reward.id)) ?? reward.price;
+  if (user.coins < prix) return { ok: false, error: "Pas assez de pièces." };
 
   await prisma.$transaction([
     prisma.user.update({
       where: { id: user.id },
-      data: { coins: user.coins - reward.price },
+      data: { coins: user.coins - prix },
     }),
     prisma.reward.update({
       where: { id: reward.id },
       data: { owned: reward.kind === "cosmetique" },
     }),
+    // Consigner l'achat : c'est lui qui fera monter le prix la prochaine fois.
+    prisma.purchase.create({
+      data: { userId: user.id, rewardId: reward.id, price: prix },
+    }),
   ]);
 
   refresh();
-  return { ok: true, coins: -reward.price };
+  return { ok: true, coins: -prix };
 }
 
 /**
@@ -410,7 +421,9 @@ export async function openChestAction(
     where: { id: chestId, userId: user.id },
   });
   if (!chest?.chestTier) return { ok: false, error: "Coffre introuvable." };
-  if (user.coins < chest.price) return { ok: false, error: "Pas assez de pièces." };
+
+  const prix = (await prixDeVente(user.id, chest.id)) ?? chest.price;
+  if (user.coins < prix) return { ok: false, error: "Pas assez de pièces." };
 
   const tier = CHEST_TIERS[chest.chestTier as ChestTier];
   const pool = await prisma.reward.findMany({
@@ -430,18 +443,21 @@ export async function openChestAction(
   await prisma.$transaction([
     prisma.user.update({
       where: { id: user.id },
-      data: { coins: user.coins - chest.price },
+      data: { coins: user.coins - prix },
     }),
     prisma.reward.update({
       where: { id: won.id },
       data: { owned: true, wonAt: new Date() },
+    }),
+    prisma.purchase.create({
+      data: { userId: user.id, rewardId: chest.id, price: prix },
     }),
   ]);
 
   refresh();
   return {
     ok: true,
-    coins: -chest.price,
+    coins: -prix,
     won: { label: won.label, icon: won.icon, price: won.price },
   };
 }

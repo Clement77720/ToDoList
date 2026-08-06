@@ -55,6 +55,7 @@ model User {
   rewards    Reward[]
   weeks      WeekSetting[]
   templates  WeeklyTemplate[]
+  purchases  Purchase[]
 }
 
 /// Session de connexion. L'`id` est le jeton opaque déposé en cookie.
@@ -236,5 +237,28 @@ model Reward {
   wonAt DateTime?
   order Int     @default(0)
 
+  /// Entrée en boutique — sert au marché : une récompense jamais achetée
+  /// se solde à partir d'un certain âge.
+  createdAt DateTime @default(now())
+
+  purchases Purchase[]
+
   @@index([userId, family])
+}
+
+/// Un achat encaissé. Le marché mesure la demande sur cette table plutôt
+/// que sur un compteur : une fenêtre glissante suppose de savoir *quand*,
+/// pas seulement combien de fois.
+model Purchase {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rewardId String
+  reward   Reward @relation(fields: [rewardId], references: [id], onDelete: Cascade)
+
+  /// Prix réellement débité, marché appliqué.
+  price Int
+  at    DateTime @default(now())
+
+  @@index([userId, rewardId, at])
 }

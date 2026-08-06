@@ -1,4 +1,5 @@
 import type { BadgeDef, ChestTier, RewardFamily } from "./catalog";
+import type { Tendance } from "./market";
 import type { DifficultyKey, TaskKind } from "./gamification";
 
 /**
@@ -76,7 +77,13 @@ export type RewardDTO = {
   id: string;
   label: string;
   icon: string;
+  /** Prix effectif, marché appliqué — c'est celui qui sera débité. */
   price: number;
+  /** Prix de catalogue, avant marché. */
+  basePrice: number;
+  /** Offre du jour : −30 %, tirée une fois par jour et par joueur. */
+  promo: boolean;
+  tendance: Tendance;
   kind: "reel" | "cosmetique";
   family: RewardFamily;
   /** Renseigné pour les coffres. */

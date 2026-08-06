@@ -53,7 +53,7 @@ il y a cinq semaines, puis la remontée en cours. Les dates sont relatives à
 | `/semaine` | **Planificateur hebdo** : réserve à placer, 7 colonnes, quota de créneaux, éditeur de routines |
 | `/calendrier` | Vue mois navigable, remplissage par taux de complétion, malus encaissés, détail du jour |
 | `/badges` | Galerie 31 badges, filtres par famille, verrouillés visibles avec progression |
-| `/boutique` | Pièces → récompenses **réelles** : 7 familles, du plaisir du jour au grand objectif, plus des 🎁 coffres au contenu tiré au sort |
+| `/boutique` | Pièces → récompenses **réelles** : 7 familles, 🎁 coffres au contenu tiré au sort, et un **marché dont les prix bougent** |
 | `/stats` | Radar d'équilibre, XP nette par semaine, assiduité, **et le barème complet en clair** |
 | `/profil` | Photo, surnom, **fuseau horaire**, grade, progression et niveaux par catégorie |
 
@@ -84,6 +84,7 @@ optimiste côté client (`useOptimistic`) pour que la coche soit instantanée.
 - Basculer une semaine entre **normale** et **vacances**
 - Modifier un engagement encore en réserve (jamais le supprimer)
 - Poser un engagement **récurrent**, qui revient en réserve chaque semaine
+- Ouvrir un coffre — le tirage est côté serveur, donc non rejouable
 
 ## Le job de minuit
 
@@ -136,6 +137,17 @@ toucher pour rééquilibrer.
   la sur-planification garantit l'échec.
 - **Les jokers empêchent l'effet « série cassée = désinstallation »**.
 - **Difficulté figée à la création** : impossible de la gonfler après coup.
+
+## Le marché de la boutique
+
+Les prix ne sont pas fixes. Ce que tu achètes souvent renchérit — jusqu'à
++60 % —, ce que tu délaisses plus de trois semaines se solde — jusqu'à −25 % —,
+et une récompense passe à **−30 % chaque jour**.
+
+L'offre du jour est tirée au sort mais **déterministe** : même joueur, même
+jour, même offre. Sans cette garantie, le prix changerait à chaque
+rechargement et le prix affiché ne serait pas celui débité — c'est
+l'invariant central du marché.
 
 ## Couleurs de données
 

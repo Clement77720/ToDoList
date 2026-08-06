@@ -219,6 +219,29 @@ les composants : un état local ne survivrait pas au retour de l'action, et
 la bannière de révélation disparaîtrait aussitôt affichée. La révélation se
 lit donc dans les données, pas dans `useState`.
 
+### Le marché
+
+`src/lib/market.ts` — fonctions **pures**, sans `server-only` : elles se
+vérifient sans base, et le client affiche exactement ce que le serveur
+débitera. Ce qu'on achète souvent renchérit (plafond +60 %), ce qu'on
+délaisse se solde après 21 jours (plancher −25 %), et une récompense passe
+à −30 % chaque jour.
+
+**L'invariant à ne jamais casser : le prix affiché est le prix débité.**
+Les Server Actions passent par `prixDeVente()` (`queries.ts`), jamais par
+`reward.price`. Afficher un prix soldé puis en débiter un autre serait le
+pire défaut possible d'un marché.
+
+L'offre du jour est tirée par `offreDuJour(graine, ids)` où la graine vaut
+`${userId}:${date}` — **déterministe, jamais `Math.random()`**. Sans cette
+garantie, l'offre changerait à chaque rendu et le prix affiché cesserait
+d'être celui débité. La liste est triée avant tirage pour que l'ordre de
+lecture en base n'entre pas dans le résultat. Les coffres en sont exclus :
+leur prix commande le palier du tirage, les solder fausserait le pari.
+
+La demande se mesure sur la table `Purchase`, pas sur un compteur : une
+fenêtre glissante suppose de savoir *quand*, pas seulement combien de fois.
+
 Le catalogue enrichi n'est **jamais imposé** aux comptes existants : le
 bouton « Compléter la boutique » ajoute ce qui manque par libellé et laisse
 les entrées personnalisées intactes. Écraser une boutique au passage d'une
