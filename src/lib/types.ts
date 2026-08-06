@@ -1,4 +1,5 @@
-import type { BadgeDef } from "./catalog";
+import type { BadgeDef, ChestTier, RewardFamily } from "./catalog";
+import type { Tendance } from "./market";
 import type { DifficultyKey, TaskKind } from "./gamification";
 
 /**
@@ -76,10 +77,22 @@ export type RewardDTO = {
   id: string;
   label: string;
   icon: string;
+  /** Prix effectif, marché appliqué — c'est celui qui sera débité. */
   price: number;
+  /** Prix de catalogue, avant marché. */
+  basePrice: number;
+  /** Offre du jour : −30 %, tirée une fois par jour et par joueur. */
+  promo: boolean;
+  tendance: Tendance;
   kind: "reel" | "cosmetique";
+  family: RewardFamily;
+  /** Renseigné pour les coffres. */
+  chestTier: ChestTier | null;
   note: string | null;
+  /** Gain de coffre remporté, pas encore consommé. */
   owned: boolean;
+  /** Millisecondes depuis le tirage, ou null. Sert à révéler le gain. */
+  wonAgoMs: number | null;
 };
 
 export type BadgeDTO = BadgeDef & {

@@ -47,6 +47,7 @@ export async function createUserWithDefaults(data: {
       data: DEFAULT_REWARDS.map((r, i) => ({
         ...r,
         note: r.note ?? null,
+        chestTier: r.chestTier ?? null,
         order: i,
         userId: user.id,
       })),

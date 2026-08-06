@@ -6,13 +6,25 @@
 
 export type DifficultyKey = "facile" | "moyenne" | "difficile";
 
+/*
+ * Les pièces sont **découplées de l'XP** : elles ne servent qu'à la
+ * boutique, jamais aux niveaux. On peut donc recalibrer l'économie sans
+ * toucher à la progression, aux malus ni aux badges.
+ *
+ * Calibrage : un joueur assidu (deux quotidiennes tenues + deux
+ * hebdomadaires, série longue) gagne environ 1 100 pièces par mois. Le
+ * catalogue s'étale de 30 pièces — un plaisir du jour — à 8 000, atteint
+ * en sept mois de régularité. Au taux précédent, le haut du catalogue
+ * demandait plus de trois ans : ces récompenses n'étaient pas des
+ * objectifs mais de la décoration.
+ */
 export const DIFFICULTIES: Record<
   DifficultyKey,
   { label: string; xp: number; coins: number; short: string }
 > = {
-  facile: { label: "Facile", short: "F", xp: 10, coins: 2 },
-  moyenne: { label: "Moyenne", short: "M", xp: 25, coins: 5 },
-  difficile: { label: "Difficile", short: "D", xp: 60, coins: 12 },
+  facile: { label: "Facile", short: "F", xp: 10, coins: 6 },
+  moyenne: { label: "Moyenne", short: "M", xp: 25, coins: 15 },
+  difficile: { label: "Difficile", short: "D", xp: 60, coins: 36 },
 };
 
 /* ── Types de tâche ─────────────────────────────────────────────

@@ -320,6 +320,7 @@ async function main() {
     data: DEFAULT_REWARDS.map((r, i) => ({
       ...r,
       note: r.note ?? null,
+      chestTier: r.chestTier ?? null,
       order: i,
       userId: user.id,
     })),
