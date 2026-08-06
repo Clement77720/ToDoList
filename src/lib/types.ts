@@ -1,4 +1,4 @@
-import type { BadgeDef } from "./catalog";
+import type { BadgeDef, ChestTier, RewardFamily } from "./catalog";
 import type { DifficultyKey, TaskKind } from "./gamification";
 
 /**
@@ -78,8 +78,14 @@ export type RewardDTO = {
   icon: string;
   price: number;
   kind: "reel" | "cosmetique";
+  family: RewardFamily;
+  /** Renseigné pour les coffres. */
+  chestTier: ChestTier | null;
   note: string | null;
+  /** Gain de coffre remporté, pas encore consommé. */
   owned: boolean;
+  /** Millisecondes depuis le tirage, ou null. Sert à révéler le gain. */
+  wonAgoMs: number | null;
 };
 
 export type BadgeDTO = BadgeDef & {

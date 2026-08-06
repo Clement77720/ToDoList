@@ -4,7 +4,12 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { getCurrentUser, getToday, grantEarnedBadges } from "@/lib/queries";
 import { applyXpDelta, materializeRoutines } from "@/lib/rollover";
-import { categoryXpToNext } from "@/lib/catalog";
+import {
+  categoryXpToNext,
+  CHEST_TIERS,
+  DEFAULT_REWARDS,
+  type ChestTier,
+} from "@/lib/catalog";
 import { isoWeekday, startOfWeek } from "@/lib/dates";
 import { getWeekKind } from "@/lib/weeks";
 import {
@@ -366,7 +371,8 @@ export async function buyRewardAction(
     where: { id: rewardId, userId: user.id },
   });
   if (!reward) return { ok: false, error: "Récompense introuvable." };
-  if (reward.owned) return { ok: false, error: "Déjà débloquée." };
+  if (reward.chestTier) return openChestAction(rewardId);
+  if (reward.owned) return { ok: false, error: "Déjà remportée — profites-en." };
   if (user.coins < reward.price) {
     return { ok: false, error: "Pas assez de pièces." };
   }
@@ -384,6 +390,109 @@ export async function buyRewardAction(
 
   refresh();
   return { ok: true, coins: -reward.price };
+}
+
+/**
+ * Ouvre un coffre : débite son prix et tire une récompense au sort parmi
+ * celles de son palier.
+ *
+ * Le tirage se fait **côté serveur** — un tirage côté client serait
+ * rejouable jusqu'au résultat souhaité. On écarte les coffres eux-mêmes
+ * (sinon on pourrait gagner un coffre en ouvrant un coffre) et les gains
+ * déjà remportés mais pas encore consommés, pour ne pas offrir deux fois
+ * la même chose tant que la première n'a pas servi.
+ */
+export async function openChestAction(
+  chestId: string,
+): Promise<ActionResult & { won?: { label: string; icon: string; price: number } }> {
+  const user = await getCurrentUser();
+  const chest = await prisma.reward.findFirst({
+    where: { id: chestId, userId: user.id },
+  });
+  if (!chest?.chestTier) return { ok: false, error: "Coffre introuvable." };
+  if (user.coins < chest.price) return { ok: false, error: "Pas assez de pièces." };
+
+  const tier = CHEST_TIERS[chest.chestTier as ChestTier];
+  const pool = await prisma.reward.findMany({
+    where: {
+      userId: user.id,
+      chestTier: null,
+      owned: false,
+      price: { lte: Number.isFinite(tier.max) ? tier.max : undefined },
+    },
+  });
+  if (pool.length === 0) {
+    return { ok: false, error: "Rien à gagner dans ce palier pour l'instant." };
+  }
+
+  const won = pool[Math.floor(Math.random() * pool.length)];
+
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: user.id },
+      data: { coins: user.coins - chest.price },
+    }),
+    prisma.reward.update({
+      where: { id: won.id },
+      data: { owned: true, wonAt: new Date() },
+    }),
+  ]);
+
+  refresh();
+  return {
+    ok: true,
+    coins: -chest.price,
+    won: { label: won.label, icon: won.icon, price: won.price },
+  };
+}
+
+/** Consomme un gain remporté : il retourne au catalogue. */
+export async function consumeRewardAction(
+  rewardId: string,
+): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  const updated = await prisma.reward.updateMany({
+    where: { id: rewardId, userId: user.id, owned: true },
+    data: { owned: false, wonAt: null },
+  });
+  if (updated.count === 0) return { ok: false, error: "Gain introuvable." };
+
+  refresh();
+  return { ok: true };
+}
+
+/**
+ * Complète la boutique d'un compte existant avec les entrées du catalogue
+ * qui lui manquent, sans toucher aux siennes.
+ *
+ * Volontairement additif : quelqu'un a pu personnaliser sa liste, et
+ * l'écraser au passage d'une migration serait une perte silencieuse.
+ */
+export async function syncShopAction(): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  const existing = await prisma.reward.findMany({
+    where: { userId: user.id },
+    select: { label: true },
+  });
+  const connus = new Set(existing.map((r) => r.label));
+
+  const manquants = DEFAULT_REWARDS.filter((r) => !connus.has(r.label));
+  if (manquants.length === 0) {
+    return { ok: false, error: "La boutique est déjà complète." };
+  }
+
+  await prisma.reward.createMany({
+    data: manquants.map((r, i) => ({
+      ...r,
+      note: r.note ?? null,
+      chestTier: r.chestTier ?? null,
+      order: existing.length + i,
+      userId: user.id,
+    })),
+  });
+
+  refresh();
+  return { ok: true };
 }
 
 /**

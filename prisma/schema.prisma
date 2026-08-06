@@ -221,7 +221,20 @@ model Reward {
   price Int
   /// reel | cosmetique
   kind  String
-  note  String?
+  /// Famille du catalogue — voir RewardFamily dans src/lib/catalog.ts.
+  family String @default("divertissement")
+  /// Renseigné pour les coffres : commun | rare | legendaire.
+  chestTier String?
+  note      String?
+
+  /// Pour une récompense ordinaire : sans objet, elle se rachète.
+  /// Pour un gain de coffre : « remporté, pas encore consommé ».
   owned Boolean @default(false)
+  /// Instant du tirage. La révélation du coffre se lit dans les données :
+  /// `refresh()` revalide le layout et remonte les composants, un état
+  /// local ne survivrait donc pas à l'ouverture.
+  wonAt DateTime?
   order Int     @default(0)
+
+  @@index([userId, family])
 }

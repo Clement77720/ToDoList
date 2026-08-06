@@ -6,6 +6,7 @@ import { getSessionUserId } from "./auth";
 import { ensureRollover, materializeWeeklyTemplates } from "./rollover";
 import { addDays, isoWeekday, startOfWeek, todayISOIn } from "./dates";
 import { BADGES, categoryXpToNext } from "./catalog";
+import type { ChestTier, RewardFamily } from "./catalog";
 import {
   DIFFICULTIES,
   isEngagement,
@@ -403,8 +404,11 @@ export const getRewards = cache(async (): Promise<RewardDTO[]> => {
     icon: r.icon,
     price: r.price,
     kind: r.kind as "reel" | "cosmetique",
+    family: r.family as RewardFamily,
+    chestTier: (r.chestTier as ChestTier | null) ?? null,
     note: r.note,
     owned: r.owned,
+    wonAgoMs: r.wonAt ? Date.now() - r.wonAt.getTime() : null,
   }));
 });
 

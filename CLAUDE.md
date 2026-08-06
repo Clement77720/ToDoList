@@ -186,6 +186,7 @@ Trois endroits doivent rester d'accord : `closeDay`/`closeWeek`
 |---|---|
 | Rééquilibrer XP, malus, séries, plafonds, niveaux | `src/lib/gamification.ts` — la source de vérité |
 | Ajouter un badge, une catégorie, une routine/récompense par défaut | `src/lib/catalog.ts` |
+| Rééquilibrer l'économie de la boutique | `DIFFICULTIES.coins` (`gamification.ts`) — les prix de `catalog.ts` sont calibrés dessus |
 | Calculer un compteur de badge | `metrics()` dans `src/lib/queries.ts:296` |
 | Ajouter une mutation | `src/app/actions.ts` |
 | Couleurs, tokens de design | `@theme` dans `src/app/globals.css` |
@@ -194,6 +195,34 @@ Trois endroits doivent rester d'accord : `closeDay`/`closeWeek`
 Le catalogue statique (badges, catégories) est une **règle**, pas une donnée :
 la base ne mémorise que ce qui est propre au joueur (possession d'un badge,
 niveau d'une catégorie, jours actifs d'une routine).
+
+## La boutique
+
+Les pièces sont **découplées de l'XP** : elles ne servent qu'à la boutique,
+jamais aux niveaux. On peut donc recalibrer l'économie sans toucher à la
+progression. Calibrage actuel : un joueur assidu gagne ~1 100 pièces/mois,
+le catalogue s'étale de 30 à 8 000 — soit du plaisir du jour à sept mois
+d'épargne. **Toute modification de `DIFFICULTIES.coins` doit être
+reconfrontée aux prix de `catalog.ts`**, sinon le haut du catalogue devient
+décoratif : c'était le cas avant, où le sommet demandait trois ans.
+
+`Reward.owned` a deux sens selon l'origine : sans objet pour une
+récompense qu'on achète (elle se rachète indéfiniment), il signifie
+« remporté au coffre, pas encore consommé » pour un gain.
+
+Le tirage des coffres est **côté serveur** — un tirage côté client serait
+rejouable jusqu'au résultat voulu. Il écarte les coffres eux-mêmes et les
+gains déjà en attente.
+
+`Reward.wonAt` existe parce que `refresh()` revalide le layout et remonte
+les composants : un état local ne survivrait pas au retour de l'action, et
+la bannière de révélation disparaîtrait aussitôt affichée. La révélation se
+lit donc dans les données, pas dans `useState`.
+
+Le catalogue enrichi n'est **jamais imposé** aux comptes existants : le
+bouton « Compléter la boutique » ajoute ce qui manque par libellé et laisse
+les entrées personnalisées intactes. Écraser une boutique au passage d'une
+migration serait une perte silencieuse.
 
 ## Style
 

@@ -52,25 +52,120 @@ export const DEFAULT_ROUTINES: {
   { title: "Ne pas grignoter", category: "sante", difficulty: "facile", days: [1, 2, 3, 4, 5] },
 ];
 
-/* ── Boutique par défaut ────────────────────────────────────── */
+/* ── Boutique par défaut ────────────────────────────────────────
+   Sept familles, du plaisir immédiat au grand objectif. L'échelle est
+   volontairement large : sans un sommet lointain, il n'y a rien à
+   épargner ; sans un bas accessible, rien à se offrir cette semaine.
+   Prix calibrés sur ~1 100 pièces/mois — cf. DIFFICULTIES.
+   ────────────────────────────────────────────────────────────── */
+
+export type RewardFamily =
+  | "divertissement"
+  | "nourriture"
+  | "achats"
+  | "temps-libre"
+  | "experiences"
+  | "social"
+  | "prestige"
+  | "coffre";
+
+export const REWARD_FAMILIES: {
+  id: RewardFamily;
+  label: string;
+  icon: string;
+  hint: string;
+}[] = [
+  { id: "divertissement", label: "Divertissement", icon: "🎮", hint: "De quoi souffler ce soir" },
+  { id: "nourriture", label: "Nourriture", icon: "🍔", hint: "Les petits plaisirs qui se mangent" },
+  { id: "temps-libre", label: "Temps libre", icon: "😴", hint: "Le droit de ne rien faire, sans culpabilité" },
+  { id: "social", label: "Social", icon: "❤️", hint: "À dépenser avec les autres" },
+  { id: "achats", label: "Achats", icon: "🛍️", hint: "Ce que tu repousses depuis des mois" },
+  { id: "experiences", label: "Expériences", icon: "✈️", hint: "Ça se prépare, ça se mérite" },
+  { id: "prestige", label: "Prestige", icon: "🏆", hint: "Le sommet — plusieurs mois d'épargne" },
+  { id: "coffre", label: "Coffres", icon: "🎁", hint: "Le contenu est tiré au sort" },
+];
+
+/**
+ * Paliers des coffres. Un coffre tire au sort une récompense dont le prix
+ * ne dépasse pas `max` : il vaut donc statistiquement plus cher que son
+ * prix, et c'est tout l'intérêt du pari.
+ */
+export const CHEST_TIERS = {
+  commun: { label: "Coffre commun", price: 100, max: 500 },
+  rare: { label: "Coffre rare", price: 500, max: 2500 },
+  legendaire: { label: "Coffre légendaire", price: 2000, max: Infinity },
+} as const;
+
+export type ChestTier = keyof typeof CHEST_TIERS;
+
 export const DEFAULT_REWARDS: {
   label: string;
   icon: string;
   price: number;
+  family: RewardFamily;
   kind: "reel" | "cosmetique";
   note?: string;
+  chestTier?: ChestTier;
 }[] = [
-  { label: "Un épisode de ma série", icon: "📺", price: 40, kind: "reel" },
-  { label: "2h de jeu vidéo sans culpabilité", icon: "🎮", price: 80, kind: "reel" },
-  { label: "Grasse matinée du dimanche", icon: "😴", price: 120, kind: "reel" },
-  { label: "Commander une pizza", icon: "🍕", price: 200, kind: "reel" },
-  { label: "Sortie ciné", icon: "🍿", price: 350, kind: "reel" },
-  { label: "L'achat que je repousse", icon: "🛍️", price: 800, kind: "reel" },
-  { label: "Week-end escapade", icon: "🌴", price: 3000, kind: "reel" },
-  { label: "Thème « Crépuscule »", icon: "🌇", price: 150, kind: "cosmetique", note: "Palette chaude" },
-  { label: "Avatar — Dragon", icon: "🐉", price: 250, kind: "cosmetique" },
-  { label: "Cadre de badge doré", icon: "🖼️", price: 400, kind: "cosmetique" },
-  { label: "Animation « Confettis »", icon: "🎉", price: 300, kind: "cosmetique", note: "À chaque tâche validée" },
+  // 🎮 Divertissement
+  { label: "Écouter un album sans interruption", icon: "🎵", price: 30, family: "divertissement", kind: "reel" },
+  { label: "Regarder un épisode de série", icon: "📺", price: 40, family: "divertissement", kind: "reel" },
+  { label: "1h de jeu vidéo", icon: "🎮", price: 80, family: "divertissement", kind: "reel" },
+  { label: "Commander une pizza", icon: "🍕", price: 200, family: "divertissement", kind: "reel" },
+  { label: "Soirée jeux de société", icon: "🎲", price: 250, family: "divertissement", kind: "reel" },
+  { label: "Aller au cinéma", icon: "🍿", price: 350, family: "divertissement", kind: "reel" },
+  { label: "Acheter un livre", icon: "📚", price: 500, family: "divertissement", kind: "reel" },
+
+  // 🍔 Nourriture
+  { label: "Une gourmandise", icon: "🍫", price: 50, family: "nourriture", kind: "reel" },
+  { label: "Une glace", icon: "🍦", price: 100, family: "nourriture", kind: "reel" },
+  { label: "Le café de ton coffee shop préféré", icon: "☕", price: 120, family: "nourriture", kind: "reel" },
+  { label: "Dessert au restaurant", icon: "🍰", price: 150, family: "nourriture", kind: "reel" },
+  { label: "Fast-food", icon: "🍔", price: 250, family: "nourriture", kind: "reel" },
+  { label: "Restaurant", icon: "🍣", price: 800, family: "nourriture", kind: "reel" },
+
+  // 😴 Temps libre
+  { label: "30 min de réseaux sociaux", icon: "📱", price: 40, family: "temps-libre", kind: "reel" },
+  { label: "Faire une sieste", icon: "😴", price: 60, family: "temps-libre", kind: "reel" },
+  { label: "Grasse matinée", icon: "🌞", price: 120, family: "temps-libre", kind: "reel" },
+  { label: "Après-midi sans culpabilité", icon: "🛋️", price: 300, family: "temps-libre", kind: "reel" },
+  { label: "Journée sans tâches", icon: "🚫", price: 2000, family: "temps-libre", kind: "reel", note: "Les malus tombent quand même — ça s'assume" },
+
+  // ❤️ Social
+  { label: "Appeler un ami pendant une heure", icon: "☎️", price: 60, family: "social", kind: "reel" },
+  { label: "Bowling", icon: "🎳", price: 300, family: "social", kind: "reel" },
+  { label: "Sortie avec des amis", icon: "🍻", price: 400, family: "social", kind: "reel" },
+  { label: "Restaurant en couple", icon: "🍽️", price: 900, family: "social", kind: "reel" },
+
+  // 🛍️ Achats
+  { label: "Achat plaisir en ligne", icon: "📦", price: 1000, family: "achats", kind: "reel", note: "Le plafond que tu t'accordes" },
+  { label: "Acheter un vêtement", icon: "👕", price: 1500, family: "achats", kind: "reel" },
+  { label: "Nouveau jeu Steam ou Switch", icon: "🎮", price: 2000, family: "achats", kind: "reel" },
+  { label: "Nouvel accessoire tech", icon: "🎧", price: 3000, family: "achats", kind: "reel" },
+  { label: "Le gadget que tu repousses", icon: "📱", price: 5000, family: "achats", kind: "reel" },
+
+  // ✈️ Expériences
+  { label: "Balade à vélo", icon: "🚲", price: 150, family: "experiences", kind: "reel" },
+  { label: "Journée plage", icon: "🏖️", price: 400, family: "experiences", kind: "reel" },
+  { label: "Concert", icon: "🎤", price: 1200, family: "experiences", kind: "reel" },
+  { label: "Camping", icon: "🏕️", price: 2500, family: "experiences", kind: "reel" },
+  { label: "Week-end", icon: "🚗", price: 3000, family: "experiences", kind: "reel" },
+  { label: "Parc d'attractions", icon: "🎡", price: 5000, family: "experiences", kind: "reel" },
+  { label: "Vacances", icon: "🌴", price: 6000, family: "experiences", kind: "reel" },
+
+  // 🏆 Prestige
+  { label: "Nouveau clavier", icon: "💻", price: 2500, family: "prestige", kind: "reel" },
+  { label: "Nouvelle paire de chaussures", icon: "👟", price: 3000, family: "prestige", kind: "reel" },
+  { label: "Une montre", icon: "⌚", price: 4000, family: "prestige", kind: "reel" },
+  { label: "Écran PC", icon: "🖥️", price: 5000, family: "prestige", kind: "reel" },
+  { label: "Nouvelle console", icon: "🎮", price: 7000, family: "prestige", kind: "reel" },
+  { label: "Nouveau téléphone", icon: "📱", price: 8000, family: "prestige", kind: "reel" },
+  { label: "Un voyage", icon: "✈️", price: 8000, family: "prestige", kind: "reel" },
+
+  // 🎁 Coffres
+  { label: CHEST_TIERS.commun.label, icon: "🎁", price: CHEST_TIERS.commun.price, family: "coffre", kind: "reel", chestTier: "commun", note: "Une récompense jusqu'à 500 pièces" },
+  { label: CHEST_TIERS.rare.label, icon: "🎁", price: CHEST_TIERS.rare.price, family: "coffre", kind: "reel", chestTier: "rare", note: "Une récompense jusqu'à 2 500 pièces" },
+  { label: CHEST_TIERS.legendaire.label, icon: "🎁", price: CHEST_TIERS.legendaire.price, family: "coffre", kind: "reel", chestTier: "legendaire", note: "N'importe quelle récompense du catalogue" },
 ];
 
 /* ── Badges ─────────────────────────────────────────────────── */
