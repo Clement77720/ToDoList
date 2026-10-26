@@ -15,8 +15,10 @@ import {
   type EtatMarche,
 } from "./market";
 import {
+  debutFenetreRetro,
   DIFFICULTIES,
   isEngagement,
+  joursRestantsPourRattraper,
   MALUS,
   xpToNextLevel,
   type DifficultyKey,
@@ -305,6 +307,41 @@ export async function getMonth(
     out[today] = dayFromTasks(today, await getTasksForDate(today));
   }
   return out;
+}
+
+/**
+ * Journées closes encore corrigeables où il reste des engagements ouverts.
+ *
+ * Sans ce rappel, le rattrapage ne se découvrirait qu'en cliquant au
+ * hasard sur un jour du calendrier : une fonctionnalité invisible ne sert
+ * personne. On ne compte que les engagements — une tâche bonus oubliée
+ * n'a rien coûté, la rappeler serait du bruit.
+ */
+export async function getRattrapages(): Promise<
+  { date: string; restantes: number; joursRestants: number }[]
+> {
+  const u = await getCurrentUser();
+  const today = await getToday();
+
+  const rows = await prisma.task.groupBy({
+    by: ["date"],
+    where: {
+      userId: u.id,
+      done: false,
+      kind: { in: ["quotidienne", "hebdomadaire"] },
+      date: { gte: debutFenetreRetro(today), lt: today },
+    },
+    _count: { _all: true },
+  });
+
+  return rows
+    .filter((r): r is typeof r & { date: string } => r.date !== null)
+    .map((r) => ({
+      date: r.date,
+      restantes: r._count._all,
+      joursRestants: joursRestantsPourRattraper(r.date, today),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 /** Nombre de tâches prévues par jour à venir — pastilles du calendrier. */

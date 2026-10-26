@@ -56,7 +56,9 @@ Une Server Action doit toujours :
 3. appeler `grantEarnedBadges(user.id)` si l'action peut débloquer un badge ;
 4. finir par `refresh()` (`revalidatePath("/", "layout")`) ;
 5. renvoyer un `ActionResult` (`{ ok: true, xp?, coins?, badges?, levelUp? }`
-   ou `{ ok: false, error }`) — jamais lever d'exception pour une erreur métier.
+   ou `{ ok: false, error }`) — jamais lever d'exception pour une erreur métier ;
+6. si elle touche une journée **déjà close**, passer par `reconcilierJour` et
+   `rejouerSerie` plutôt que de corriger l'XP à la main (cf. « Le rattrapage »).
 
 La mise à jour optimiste vit côté client (`useOptimistic` dans `TodayTasks`,
 `WeekPlanner`, `RoutinesEditor`). Si tu ajoutes une action mutative visible
@@ -166,6 +168,47 @@ cas de tous les jours pour qui ouvre l'application quotidiennement. Les
 malus ne tombaient donc qu'après deux jours d'absence. Toute modification
 de cette boucle doit être vérifiée avec `lastRollover = hier`.
 
+### Le rattrapage (fenêtre de `RETRO_DAYS` jours)
+
+Une journée close reste corrigeable sept jours : cocher une tâche après
+coup rend le malus encaissé et refait le bilan. Trois pièces, dans
+`rollover.ts`, appelées depuis `toggleTaskAction` :
+
+| Fonction | Rôle |
+|---|---|
+| `reconcilierJour(userId, date)` | refait le `DayRecord` et renvoie l'XP à rendre (ou à reprendre) |
+| `malusDeLaSemaine` / `solderSemaine` | même chose à la maille de la semaine, pour une hebdomadaire d'une semaine révolue |
+| `rejouerSerie(userId, today)` | recalcule série, record et jokers depuis le journal |
+
+**Ne jamais rembourser à la tâche.** `DAILY_MALUS_CAP` rend le compte faux
+dès cinq oublis : 5 × 15 = 75 demandés, 60 débités. On recalcule le coût de
+la journée entière et on applique la *différence* avec ce qui est inscrit au
+journal. `DayRecord.malus` fait foi — d'où le fait que `closeDay` y inscrive
+le coût **total** de la journée (`malus`) et ne débite que le reste
+(`restant`), le joueur ayant pu solder sa soirée à l'avance via
+`applyTonightMalusAction`.
+
+`Task.malusApplied` n'est jamais levé : c'est une marque « soldée au titre
+de ce jour / cette semaine », pas un solde. Le compte est porté par
+`DayRecord.malus`, ce qui rend le rattrapage réversible au point près —
+décocher reprend exactement ce qui avait été rendu.
+
+**La série n'est plus incrémentale, elle se redérive.** `rejouerSerie`
+rejoue les règles de `runRollover` sur les `DayRecord` ordonnés : c'est la
+seule définition qui reste vraie après une correction. Les deux jeux de
+règles doivent donc rester identiques — toucher à l'un impose de suivre
+dans l'autre. Le record, lui, ne redescend jamais.
+
+La garde de fenêtre est **côté serveur** (`toggleTaskAction`), pas seulement
+dans l'écran : le client peut mentir. `estRattrapable`,
+`debutFenetreRetro` et `joursRestantsPourRattraper` vivent dans
+`gamification.ts` parce que les composants clients en ont besoin.
+
+Ce qui n'est **pas** rattrapé : une journée où l'application n'a pas été
+ouverte n'a jamais matérialisé ses routines, donc n'a aucune tâche à
+cocher. La matérialiser après coup créerait des oublis — et donc des malus —
+là où il n'y en avait pas.
+
 ### Régime de semaine
 
 `WeekSetting` n'existe **que** pour les semaines mises en vacances : pas de
@@ -185,6 +228,7 @@ Trois endroits doivent rester d'accord : `closeDay`/`closeWeek`
 | Besoin | Fichier |
 |---|---|
 | Rééquilibrer XP, malus, séries, plafonds, niveaux | `src/lib/gamification.ts` — la source de vérité |
+| Élargir ou fermer la fenêtre de rattrapage | `RETRO_DAYS` (`gamification.ts`) |
 | Ajouter un badge, une catégorie, une routine/récompense par défaut | `src/lib/catalog.ts` |
 | Rééquilibrer l'économie de la boutique | `DIFFICULTIES.coins` (`gamification.ts`) — les prix de `catalog.ts` sont calibrés dessus |
 | Calculer un compteur de badge | `metrics()` dans `src/lib/queries.ts:296` |
@@ -267,6 +311,16 @@ migration serait une perte silencieuse.
 
 Points réels du code actuel, à connaître avant de conclure à un bug :
 
+- **L'XP d'une tâche est créditée deux fois.** `toggleTaskAction` verse
+  `taskReward()` à la coche, puis `closeDay` recalcule `gained` — la somme
+  des XP de base des tâches faites — et `runRollover` l'ajoute une seconde
+  fois à minuit. Une moyenne faite à l'heure rapporte donc 35 + 25 et non
+  35. Le barème affiché ment d'autant. Corriger demande de choisir : soit
+  `runRollover` n'applique plus que `-aDebiter`, et les gains sont divisés
+  par ~2 ; soit `closeDay` cesse d'écrire `gained`, et le journal perd son
+  bilan. Le rattrapage reproduit sciemment ce double crédit pour rester
+  symétrique — une journée rattrapée vaut exactement ce qu'elle aurait valu
+  cochée à temps, ponctualité mise à part.
 - **`DAILY_XP_CAP` (250 XP/jour) n'est pas appliqué.** La constante est
   seulement *affichée* (`src/app/page.tsx:181`, `src/app/stats/page.tsx:242`) ;
   ni `toggleTaskAction` ni `closeDay` ne la font respecter. L'interface annonce

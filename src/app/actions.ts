@@ -8,7 +8,14 @@ import {
   grantEarnedBadges,
   prixDeVente,
 } from "@/lib/queries";
-import { applyXpDelta, materializeRoutines } from "@/lib/rollover";
+import {
+  applyXpDelta,
+  malusDeLaSemaine,
+  materializeRoutines,
+  reconcilierJour,
+  rejouerSerie,
+  solderSemaine,
+} from "@/lib/rollover";
 import {
   categoryXpToNext,
   CHEST_TIERS,
@@ -19,8 +26,10 @@ import { isoWeekday, startOfWeek } from "@/lib/dates";
 import { getWeekKind } from "@/lib/weeks";
 import {
   DAILY_MALUS_CAP,
+  debutFenetreRetro,
   MALUS,
   MAX_ENGAGEMENTS_PER_DAY,
+  RETRO_DAYS,
   taskReward,
   type DifficultyKey,
   type WeekKind,
@@ -63,7 +72,15 @@ async function addCategoryXp(categoryId: string, delta: number) {
   });
 }
 
-/** Coche ou décoche une tâche, et répercute gains et niveaux. */
+/**
+ * Coche ou décoche une tâche, et répercute gains et niveaux.
+ *
+ * Une journée déjà close reste corrigeable pendant `RETRO_DAYS` jours :
+ * oublier de cocher avant minuit ne doit pas coûter une journée
+ * réellement faite. Le rattrapage rend alors le malus encaissé, refait le
+ * bilan de la journée et rejoue la série. Il ne rend pas le bonus de
+ * ponctualité : c'est tout ce qui distingue le rattrapage du jour même.
+ */
 export async function toggleTaskAction(taskId: string): Promise<ActionResult> {
   const user = await getCurrentUser();
   const task = await prisma.task.findFirst({
@@ -72,6 +89,16 @@ export async function toggleTaskAction(taskId: string): Promise<ActionResult> {
   if (!task) return { ok: false, error: "Tâche introuvable." };
 
   const today = await getToday();
+
+  // Garde côté serveur : l'écran n'ouvre la coche que dans la fenêtre,
+  // mais le client peut mentir et l'historique, lui, doit se figer.
+  if (task.date && task.date < debutFenetreRetro(today)) {
+    return {
+      ok: false,
+      error: `Trop tard : on ne corrige que les ${RETRO_DAYS} derniers jours.`,
+    };
+  }
+
   const reward = taskReward(task.difficulty as DifficultyKey, {
     onTime: task.date === today,
     streakDays: user.streak,
@@ -80,12 +107,39 @@ export async function toggleTaskAction(taskId: string): Promise<ActionResult> {
   const nowDone = !task.done;
   const sign = nowDone ? 1 : -1;
 
+  // Une hebdomadaire d'une semaine révolue a déjà été débitée dimanche
+  // soir ; celle de la semaine en cours ne l'est pas encore.
+  const semaine =
+    task.kind === "hebdomadaire" &&
+    task.weekStart !== null &&
+    task.weekStart < startOfWeek(today)
+      ? task.weekStart
+      : null;
+  const malusHebdoAvant = semaine
+    ? await malusDeLaSemaine(user.id, semaine)
+    : 0;
+
   await prisma.task.update({
     where: { id: task.id },
     data: { done: nowDone, doneAt: nowDone ? new Date() : null },
   });
 
-  const applied = applyXpDelta(user.level, user.xp, sign * reward.xp);
+  // Correction du passé : ce que le journal avait débité en trop (ou pas
+  // assez, si l'on décoche). Nulle quand on joue la journée en cours.
+  let correction = 0;
+  if (task.date && task.date < today) {
+    correction += await reconcilierJour(user.id, task.date);
+  }
+  if (semaine) {
+    await solderSemaine(user.id, semaine);
+    correction += malusHebdoAvant - (await malusDeLaSemaine(user.id, semaine));
+  }
+
+  const applied = applyXpDelta(
+    user.level,
+    user.xp,
+    sign * reward.xp + correction,
+  );
   await prisma.user.update({
     where: { id: user.id },
     data: {
@@ -96,11 +150,17 @@ export async function toggleTaskAction(taskId: string): Promise<ActionResult> {
   });
   await addCategoryXp(task.categoryId, sign * reward.xp);
 
+  // Une journée ratée vient peut-être de devenir réussie : la série ne
+  // s'incrémente plus, elle se redérive du journal.
+  if (correction !== 0 || (task.date && task.date < today) || semaine) {
+    await rejouerSerie(user.id, today);
+  }
+
   const badges = nowDone ? await grantEarnedBadges(user.id) : [];
   refresh();
   return {
     ok: true,
-    xp: sign * reward.xp,
+    xp: sign * reward.xp + correction,
     coins: sign * reward.coins,
     badges,
     levelUp: applied.leveledUp,
