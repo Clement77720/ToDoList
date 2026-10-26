@@ -75,6 +75,10 @@ async function addCategoryXp(categoryId: string, delta: number) {
 /**
  * Coche ou décoche une tâche, et répercute gains et niveaux.
  *
+ * **C'est le seul endroit où l'XP d'une tâche est créditée.** Le rollover
+ * ne fait que débiter les oublis ; s'il créditait aussi le bilan de la
+ * journée, tout serait compté deux fois.
+ *
  * Une journée déjà close reste corrigeable pendant `RETRO_DAYS` jours :
  * oublier de cocher avant minuit ne doit pas coûter une journée
  * réellement faite. Le rattrapage rend alors le malus encaissé, refait le
@@ -124,8 +128,8 @@ export async function toggleTaskAction(taskId: string): Promise<ActionResult> {
     data: { done: nowDone, doneAt: nowDone ? new Date() : null },
   });
 
-  // Correction du passé : ce que le journal avait débité en trop (ou pas
-  // assez, si l'on décoche). Nulle quand on joue la journée en cours.
+  // Correction du passé : le malus que le journal avait débité en trop (ou
+  // pas assez, si l'on décoche). Nulle quand on joue la journée en cours.
   let correction = 0;
   if (task.date && task.date < today) {
     correction += await reconcilierJour(user.id, task.date);

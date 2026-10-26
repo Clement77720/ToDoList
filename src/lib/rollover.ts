@@ -142,7 +142,11 @@ async function runRollover(
       streak = 0;
     }
 
-    const applied = applyXpDelta(level, xp, closed.gained - aDebiter);
+    // La clôture ne *rapporte* rien : l'XP d'une tâche est versée une
+    // seule fois, quand on la coche. `closed.gained` reste le bilan de la
+    // journée — une donnée d'affichage, pas une écriture au grand livre.
+    // L'ajouter ici créditait tout une seconde fois à minuit.
+    const applied = applyXpDelta(level, xp, -aDebiter);
     level = applied.level;
     xp = applied.xp;
   }
@@ -243,17 +247,24 @@ async function closeWeek(
 }
 
 /* ── Rattrapage ─────────────────────────────────────────────────
-   Corriger une journée déjà close, sans jamais rembourser à la
-   tâche : le plafond `DAILY_MALUS_CAP` rendrait le compte faux dès
-   trois oublis (3 × 15 = 45 débités, 45 rendus — mais cinq oublis
-   coûtent 60 et non 75). On recalcule donc le coût de la journée
-   entière et on applique la *différence* avec ce qui a été inscrit
-   au journal. Le `DayRecord` fait foi.
+   Corriger une journée déjà close revient à rendre le malus qu'elle
+   avait coûté — jamais à la tâche : le plafond `DAILY_MALUS_CAP`
+   rendrait le compte faux dès cinq oublis (5 × 15 = 75 demandés, 60
+   débités). On recalcule donc le coût de la journée entière et on
+   applique la *différence* avec ce qui est inscrit au journal, qui
+   fait foi.
+
+   L'XP de la tâche, elle, suit le chemin ordinaire : versée par
+   l'action qui la coche, une fois et une seule.
    ────────────────────────────────────────────────────────────── */
 
 /**
  * Refait le bilan d'une journée close après une correction.
- * Renvoie l'XP à rendre (positif) ou à reprendre (négatif).
+ * Renvoie le **malus** à rendre (positif) ou à reprendre (négatif).
+ *
+ * Rien d'autre : l'XP de la tâche rattrapée est versée par l'action qui
+ * la coche, comme pour n'importe quelle tâche. Le bilan `gained` est mis
+ * à jour pour l'affichage, il n'entre pas dans le calcul rendu.
  */
 export async function reconcilierJour(
   userId: string,
@@ -301,7 +312,7 @@ export async function reconcilierJour(
     });
   }
 
-  return gained - malus - (avant ? avant.gained - avant.malus : 0);
+  return (avant?.malus ?? 0) - malus;
 }
 
 /** Marque soldées les hebdomadaires encore ouvertes d'une semaine close. */

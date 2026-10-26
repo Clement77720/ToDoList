@@ -161,6 +161,13 @@ concurrents créaient **24 quotidiennes au lieu de 2**.
 La journée est marquée traitée *avant* le travail, et rendue si celui-ci
 lève. Mieux vaut sauter un rollover qu'en jouer deux.
 
+**Le rollover ne crédite rien, il ne fait que débiter.** L'XP d'une tâche
+est versée une fois, à la coche, par `toggleTaskAction`. `closeDay` calcule
+bien un `gained`, mais c'est le bilan inscrit au `DayRecord` pour
+l'affichage, pas une écriture au grand livre : l'ajouter au delta d'XP
+comptait chaque tâche deux fois — une moyenne faite à l'heure rapportait
+35 + 25 au lieu de 35.
+
 La boucle clôt les jours de `today - gap` à **hier inclus**. L'index est
 délicat : une version antérieure itérait `addDays(today, -(gap - i))` sur
 `i` de 1 à `gap` et ne clôturait jamais la veille quand `gap = 1` — soit le
@@ -187,6 +194,10 @@ journal. `DayRecord.malus` fait foi — d'où le fait que `closeDay` y inscrive
 le coût **total** de la journée (`malus`) et ne débite que le reste
 (`restant`), le joueur ayant pu solder sa soirée à l'avance via
 `applyTonightMalusAction`.
+
+`reconcilierJour` ne rend **que** le malus. L'XP de la tâche rattrapée suit
+le chemin ordinaire, versée par `toggleTaskAction` comme n'importe quelle
+coche — cf. l'invariant ci-dessous.
 
 `Task.malusApplied` n'est jamais levé : c'est une marque « soldée au titre
 de ce jour / cette semaine », pas un solde. Le compte est porté par
@@ -311,16 +322,10 @@ migration serait une perte silencieuse.
 
 Points réels du code actuel, à connaître avant de conclure à un bug :
 
-- **L'XP d'une tâche est créditée deux fois.** `toggleTaskAction` verse
-  `taskReward()` à la coche, puis `closeDay` recalcule `gained` — la somme
-  des XP de base des tâches faites — et `runRollover` l'ajoute une seconde
-  fois à minuit. Une moyenne faite à l'heure rapporte donc 35 + 25 et non
-  35. Le barème affiché ment d'autant. Corriger demande de choisir : soit
-  `runRollover` n'applique plus que `-aDebiter`, et les gains sont divisés
-  par ~2 ; soit `closeDay` cesse d'écrire `gained`, et le journal perd son
-  bilan. Le rattrapage reproduit sciemment ce double crédit pour rester
-  symétrique — une journée rattrapée vaut exactement ce qu'elle aurait valu
-  cochée à temps, ponctualité mise à part.
+- **`DayRecord.gained` n'est pas ce qui a été crédité.** C'est la somme des
+  XP *de base* des tâches faites — un bilan d'affichage. Le crédit réel
+  passe par `taskReward()`, multiplicateurs de ponctualité et de série
+  compris, et vaut donc davantage. Le journal sous-estime, par construction.
 - **`DAILY_XP_CAP` (250 XP/jour) n'est pas appliqué.** La constante est
   seulement *affichée* (`src/app/page.tsx:181`, `src/app/stats/page.tsx:242`) ;
   ni `toggleTaskAction` ni `closeDay` ne la font respecter. L'interface annonce
