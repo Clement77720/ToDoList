@@ -105,6 +105,26 @@ serverless entrées ensemble ne matérialisent pas les tâches en double. Une
 absence de plusieurs semaines est rattrapée jour par jour (plafonnée à 120
 journées).
 
+## Rattraper une journée oubliée
+
+Oublier de cocher avant minuit ne doit pas coûter une journée réellement
+faite. Les **sept derniers jours restent corrigeables** : ouvre le calendrier,
+clique sur la journée, coche ce que tu avais fait.
+
+Ce qui se passe alors : la tâche rapporte son XP, le malus déjà encaissé est
+**rendu**, le bilan de la journée est refait et la série est **recalculée** —
+une journée ratée qui redevient réussie remet la série en marche, et rend le
+joker qu'elle avait consommé. Seul le bonus de ponctualité reste perdu : c'est
+tout ce qui sépare le rattrapage du jour même.
+
+Le tableau de bord signale les journées à rattraper, le calendrier les marque
+d'un ⏪. Au-delà de sept jours l'historique se fige, sinon plus rien ne pousse
+à tenir sa liste le soir.
+
+Une limite connue : on rattrape les tâches **qui existaient**. Une journée où
+l'application n'a pas été ouverte du tout n'a jamais vu ses routines
+matérialisées — il n'y a rien à y cocher.
+
 ## Les règles du jeu
 
 Tout est centralisé dans `src/lib/gamification.ts` — c'est le seul fichier à
@@ -122,6 +142,7 @@ toucher pour rééquilibrer.
 | Plafond anti-farm | 250 XP / jour |
 | Plafond de malus | 60 XP / jour |
 | Engagements | 4 par jour maximum, quotidiennes incluses |
+| Fenêtre de rattrapage | 7 jours glissants, aujourd'hui compris |
 
 ### Les garde-fous (choix de design assumés)
 
@@ -136,6 +157,8 @@ toucher pour rééquilibrer.
 - **La série ne dépend que des engagements**, pas de toutes les tâches — sinon
   la sur-planification garantit l'échec.
 - **Les jokers empêchent l'effet « série cassée = désinstallation »**.
+- **Une semaine glissante reste corrigeable** — mais une seule. Un historique
+  indéfiniment modifiable n'est plus un historique.
 - **Difficulté figée à la création** : impossible de la gonfler après coup.
 
 ## Le marché de la boutique

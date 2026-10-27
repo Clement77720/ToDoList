@@ -8,13 +8,19 @@ import {
   getCategories,
   getHistory,
   getPlayer,
+  getRattrapages,
   getTasksForDate,
   getWeeklyTasks,
   getToday,
 } from "@/lib/queries";
-import { formatLong, startOfWeek } from "@/lib/dates";
+import { formatDayMonth, formatLong, startOfWeek } from "@/lib/dates";
 import { getWeekKind } from "@/lib/weeks";
-import { DAILY_XP_CAP, isEngagement, RARITY } from "@/lib/gamification";
+import {
+  DAILY_XP_CAP,
+  isEngagement,
+  RARITY,
+  RETRO_DAYS,
+} from "@/lib/gamification";
 
 function QuestRow({
   label,
@@ -65,12 +71,52 @@ function QuestRow({
   );
 }
 
+/**
+ * Rappel des journées closes qu'on peut encore corriger.
+ * Ne s'affiche que s'il y a quelque chose à rattraper.
+ */
+function Rattrapages({
+  jours,
+}: {
+  jours: { date: string; restantes: number; joursRestants: number }[];
+}) {
+  return (
+    <Card>
+      <CardTitle right={`${RETRO_DAYS} jours glissants`}>
+        ⏪ À rattraper
+      </CardTitle>
+      <p className="mb-3 text-[11px] leading-relaxed text-ink-3">
+        Ces journées sont closes, mais encore corrigeables. Cocher ce que tu as
+        réellement fait te rend le malus et recalcule ta série.
+      </p>
+      <ul className="flex flex-col gap-2">
+        {jours.map((j) => (
+          <li key={j.date}>
+            <Link
+              href={`/calendrier?m=${j.date.slice(0, 7)}&d=${j.date}`}
+              className="flex items-center justify-between gap-3 rounded-xl border border-gold/30 bg-gold/10 px-3 py-2 text-[12px] transition-colors hover:bg-gold/20"
+            >
+              <span className="font-medium">{formatDayMonth(j.date)}</span>
+              <span className="text-ink-3 tabular-nums">
+                {j.restantes} non faite{j.restantes > 1 ? "s" : ""} ·{" "}
+                {j.joursRestants <= 1
+                  ? "dernier jour"
+                  : `${j.joursRestants} j restants`}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 export default async function Dashboard() {
   const today = await getToday();
   const weekStart = startOfWeek(today);
 
   const player = await getPlayer();
-  const [tasks, categories, weekly, history, badges, weekKind] =
+  const [tasks, categories, weekly, history, badges, weekKind, rattrapages] =
     await Promise.all([
       getTasksForDate(today),
       getCategories(),
@@ -78,6 +124,7 @@ export default async function Dashboard() {
       getHistory(),
       getBadges(),
       getWeekKind(player.id, weekStart),
+      getRattrapages(),
     ]);
 
   const engagements = tasks.filter((t) => isEngagement(t.kind));
@@ -198,6 +245,8 @@ export default async function Dashboard() {
             weeklyPending={weeklyPending}
             weekKind={weekKind}
           />
+
+          {rattrapages.length > 0 ? <Rattrapages jours={rattrapages} /> : null}
 
           <Card>
             <CardTitle right="renouvelées chaque nuit">

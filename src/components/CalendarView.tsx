@@ -2,7 +2,12 @@
 
 import Link from "next/link";
 import { formatLong, formatMonthYear, startOfWeek } from "@/lib/dates";
+import {
+  estRattrapable,
+  joursRestantsPourRattraper,
+} from "@/lib/gamification";
 import type { CategoryDTO, DayDTO, TaskDTO } from "@/lib/types";
+import { RetroTasks } from "./RetroTasks";
 import { TaskList } from "./TaskList";
 import { TodayTasks } from "./TodayTasks";
 import { Card, CardTitle } from "./ui";
@@ -65,6 +70,13 @@ function DayCell({
 }) {
   const isToday = date === today;
   const isFuture = date > today;
+  // Journée close, encore corrigeable, et qui a laissé des restes : sans
+  // ce repère le rattrapage ne se découvre qu'en cliquant au hasard.
+  const aRattraper =
+    !isToday &&
+    !isFuture &&
+    estRattrapable(date, today) &&
+    Boolean(record && record.done < record.total);
   const tint = record && record.done > 0 ? rampFor(record.ratio, vacances) : null;
 
   return (
@@ -78,7 +90,7 @@ function DayCell({
           : isFuture
             ? `${planned} tâches prévues`
             : "aucune donnée"
-      }`}
+      }${aRattraper ? " — encore rattrapable" : ""}`}
       className={`relative flex h-[92px] flex-col rounded-xl border p-2 text-left transition-all ${
         inMonth ? "" : "opacity-35"
       } ${
@@ -113,6 +125,11 @@ function DayCell({
           {day}
         </span>
         <span className="flex items-center gap-0.5 text-[10px]">
+          {aRattraper ? (
+            <span aria-hidden title="Encore rattrapable">
+              ⏪
+            </span>
+          ) : null}
           {record?.perfect ? <span aria-hidden>👑</span> : null}
           {record?.success && !record.perfect ? (
             <span aria-hidden>🔥</span>
@@ -239,6 +256,9 @@ export function CalendarView({
             <span className="flex items-center gap-1.5">
               <span className="font-bold text-fire">−15</span> malus
             </span>
+            <span className="flex items-center gap-1.5">
+              <span aria-hidden>⏪</span> encore rattrapable
+            </span>
             <span className="flex items-center gap-1">
               moins
               {RAMP.map((c) => (
@@ -332,6 +352,12 @@ export function CalendarView({
             tasks={selectedTasks}
             streak={streak}
             categories={categories}
+          />
+        ) : estRattrapable(selected, today) ? (
+          <RetroTasks
+            tasks={selectedTasks}
+            streak={streak}
+            joursRestants={joursRestantsPourRattraper(selected, today)}
           />
         ) : (
           <TaskList tasks={selectedTasks} streak={streak} />

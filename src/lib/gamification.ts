@@ -4,6 +4,8 @@
  * quand la maquette sera branchée sur une vraie base.
  */
 
+import { addDays, daysBetween, type ISODate } from "./dates";
+
 export type DifficultyKey = "facile" | "moyenne" | "difficile";
 
 /*
@@ -113,6 +115,37 @@ export const DAILY_MALUS_CAP = 60;
 
 /** Si true, l'XP ne descend jamais sous le seuil du niveau atteint. */
 export const LEVEL_FLOOR_PROTECTION = true;
+
+/* ── Rattrapage ─────────────────────────────────────────────────
+   Oublier de cocher avant minuit ne doit pas coûter une journée
+   réellement faite : une semaine glissante reste corrigeable.
+
+   Pourquoi pas davantage ? Parce qu'un historique indéfiniment
+   modifiable n'est plus un historique, et que la pression du jour
+   même — le bonus de ponctualité, le malus du soir — est le moteur
+   du jeu. Sept jours couvrent l'oubli ; pas la reconstitution.
+   ────────────────────────────────────────────────────────────── */
+
+/** Largeur de la fenêtre de rattrapage, aujourd'hui compris. */
+export const RETRO_DAYS = 7;
+
+/** Plus ancienne journée encore corrigeable depuis `today`. */
+export function debutFenetreRetro(today: ISODate): ISODate {
+  return addDays(today, -(RETRO_DAYS - 1));
+}
+
+/** La journée est-elle encore corrigeable ? Aujourd'hui compris. */
+export function estRattrapable(date: ISODate, today: ISODate): boolean {
+  return date <= today && date >= debutFenetreRetro(today);
+}
+
+/** Jours restants pour corriger cette journée, celui-ci compris. */
+export function joursRestantsPourRattraper(
+  date: ISODate,
+  today: ISODate,
+): number {
+  return RETRO_DAYS - daysBetween(date, today);
+}
 
 /** Malus dû ce soir : uniquement les quotidiennes non faites. */
 export function tonightMalus(

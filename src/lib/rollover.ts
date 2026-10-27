@@ -26,6 +26,20 @@ import { vacationWeekStarts } from "./weeks";
 /** Nombre maximum de journées rattrapées d'un coup (retour de vacances). */
 const MAX_CATCHUP_DAYS = 120;
 
+/** Malus d'une journée : les quotidiennes oubliées, sous plafond. */
+function malusQuotidien(oubliees: number, onVacation: boolean): number {
+  return onVacation
+    ? 0
+    : Math.min(oubliees * MALUS.quotidienne, DAILY_MALUS_CAP);
+}
+
+/** Malus d'une semaine : les hebdomadaires oubliées, sous plafond. */
+function malusHebdomadaire(oubliees: number, onVacation: boolean): number {
+  return onVacation
+    ? 0
+    : Math.min(oubliees * MALUS.hebdomadaire, DAILY_MALUS_CAP);
+}
+
 export async function ensureRollover(userId: string, today: string) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) return;
@@ -108,9 +122,9 @@ async function runRollover(
 
     // Malus de fin de semaine : les hebdomadaires non faites tombent
     // le dimanche soir, jamais avant — elles restent déplaçables.
-    let malus = closed.malus;
+    let aDebiter = closed.restant;
     if (isoWeekday(date) === 7) {
-      malus += await closeWeek(userId, startOfWeek(date), onVacation);
+      aDebiter += await closeWeek(userId, startOfWeek(date), onVacation);
     }
 
     // Série : un joker absorbe une journée ratée avant de la casser.
@@ -128,7 +142,11 @@ async function runRollover(
       streak = 0;
     }
 
-    const applied = applyXpDelta(level, xp, closed.gained - malus);
+    // La clôture ne *rapporte* rien : l'XP d'une tâche est versée une
+    // seule fois, quand on la coche. `closed.gained` reste le bilan de la
+    // journée — une donnée d'affichage, pas une écriture au grand livre.
+    // L'ajouter ici créditait tout une seconde fois à minuit.
+    const applied = applyXpDelta(level, xp, -aDebiter);
     level = applied.level;
     xp = applied.xp;
   }
@@ -148,6 +166,13 @@ async function runRollover(
  * En semaine de vacances, les oubliées sont marquées `malusApplied` sans
  * rien débiter : elles sont *soldées*. Repasser la semaine en « normale »
  * plus tard ne peut donc pas les débiter rétroactivement.
+ *
+ * Deux montants, à ne pas confondre : `malus` est ce que la journée coûte
+ * au total — c'est lui qu'on inscrit au journal, et c'est sur lui qu'un
+ * rattrapage se calera pour savoir quoi rendre — tandis que `restant` est
+ * ce qu'il reste à débiter, le joueur ayant pu solder sa soirée à l'avance
+ * par `applyTonightMalusAction`. Les confondre inscrivait « −0 XP » sur une
+ * journée qui avait bel et bien coûté 30.
  */
 async function closeDay(userId: string, date: string, onVacation: boolean) {
   const tasks = await prisma.task.findMany({ where: { userId, date } });
@@ -159,16 +184,15 @@ async function closeDay(userId: string, date: string, onVacation: boolean) {
     0,
   );
 
-  const missedDaily = tasks.filter(
-    (t) => t.kind === "quotidienne" && !t.done && !t.malusApplied,
-  );
-  const malus = onVacation
-    ? 0
-    : Math.min(missedDaily.length * MALUS.quotidienne, DAILY_MALUS_CAP);
+  const oubliees = tasks.filter((t) => t.kind === "quotidienne" && !t.done);
+  const dejaSoldees = oubliees.filter((t) => t.malusApplied);
+  const malus = malusQuotidien(oubliees.length, onVacation);
+  const restant = malus - malusQuotidien(dejaSoldees.length, onVacation);
 
-  if (missedDaily.length > 0) {
+  const aSolder = oubliees.filter((t) => !t.malusApplied);
+  if (aSolder.length > 0) {
     await prisma.task.updateMany({
-      where: { id: { in: missedDaily.map((t) => t.id) } },
+      where: { id: { in: aSolder.map((t) => t.id) } },
       data: { malusApplied: true },
     });
   }
@@ -191,6 +215,7 @@ async function closeDay(userId: string, date: string, onVacation: boolean) {
   return {
     gained,
     malus,
+    restant,
     success: engagements.length > 0 && engagements.every((t) => t.done),
   };
 }
@@ -218,8 +243,166 @@ async function closeWeek(
     data: { malusApplied: true },
   });
 
-  if (onVacation) return 0;
-  return Math.min(pending.length * MALUS.hebdomadaire, DAILY_MALUS_CAP);
+  return malusHebdomadaire(pending.length, onVacation);
+}
+
+/* ── Rattrapage ─────────────────────────────────────────────────
+   Corriger une journée déjà close revient à rendre le malus qu'elle
+   avait coûté — jamais à la tâche : le plafond `DAILY_MALUS_CAP`
+   rendrait le compte faux dès cinq oublis (5 × 15 = 75 demandés, 60
+   débités). On recalcule donc le coût de la journée entière et on
+   applique la *différence* avec ce qui est inscrit au journal, qui
+   fait foi.
+
+   L'XP de la tâche, elle, suit le chemin ordinaire : versée par
+   l'action qui la coche, une fois et une seule.
+   ────────────────────────────────────────────────────────────── */
+
+/**
+ * Refait le bilan d'une journée close après une correction.
+ * Renvoie le **malus** à rendre (positif) ou à reprendre (négatif).
+ *
+ * Rien d'autre : l'XP de la tâche rattrapée est versée par l'action qui
+ * la coche, comme pour n'importe quelle tâche. Le bilan `gained` est mis
+ * à jour pour l'affichage, il n'entre pas dans le calcul rendu.
+ */
+export async function reconcilierJour(
+  userId: string,
+  date: string,
+): Promise<number> {
+  const onVacation = (await vacationWeekStarts(userId)).has(startOfWeek(date));
+  const tasks = await prisma.task.findMany({ where: { userId, date } });
+
+  const done = tasks.filter((t) => t.done);
+  const engagements = tasks.filter((t) => isEngagement(t.kind as TaskKind));
+  const gained = done.reduce(
+    (s, t) => s + DIFFICULTIES[t.difficulty as keyof typeof DIFFICULTIES].xp,
+    0,
+  );
+  const oubliees = tasks.filter((t) => t.kind === "quotidienne" && !t.done);
+  const malus = malusQuotidien(oubliees.length, onVacation);
+
+  const avant = await prisma.dayRecord.findUnique({
+    where: { userId_date: { userId, date } },
+  });
+
+  const bilan = {
+    done: done.length,
+    total: tasks.length,
+    gained,
+    malus,
+    success: engagements.length > 0 && engagements.every((t) => t.done),
+    perfect: tasks.length > 0 && done.length === tasks.length,
+  };
+  await prisma.dayRecord.upsert({
+    where: { userId_date: { userId, date } },
+    create: { userId, date, ...bilan },
+    update: bilan,
+  });
+
+  // La journée est close : toute quotidienne non faite y est soldée, y
+  // compris celle qu'on vient de décocher. On ne lève jamais la marque —
+  // c'est `DayRecord.malus` qui porte le compte, pas le drapeau, et une
+  // tâche rattrapée puis décochée doit redevenir débitable.
+  const aSolder = oubliees.filter((t) => !t.malusApplied);
+  if (aSolder.length > 0) {
+    await prisma.task.updateMany({
+      where: { id: { in: aSolder.map((t) => t.id) } },
+      data: { malusApplied: true },
+    });
+  }
+
+  return (avant?.malus ?? 0) - malus;
+}
+
+/** Marque soldées les hebdomadaires encore ouvertes d'une semaine close. */
+export async function solderSemaine(userId: string, weekStart: string) {
+  await prisma.task.updateMany({
+    where: {
+      userId,
+      weekStart,
+      kind: "hebdomadaire",
+      done: false,
+      malusApplied: false,
+    },
+    data: { malusApplied: true },
+  });
+}
+
+/**
+ * Malus hebdomadaire dû par une semaine close, d'après l'état courant.
+ *
+ * Aucun journal à la maille de la semaine : on le relit des tâches. Lu
+ * avant puis après une correction, l'écart donne exactement ce qu'il faut
+ * rendre — plafond compris.
+ */
+export async function malusDeLaSemaine(
+  userId: string,
+  weekStart: string,
+): Promise<number> {
+  const onVacation = (await vacationWeekStarts(userId)).has(weekStart);
+  const oubliees = await prisma.task.count({
+    where: {
+      userId,
+      weekStart,
+      kind: "hebdomadaire",
+      done: false,
+      malusApplied: true,
+    },
+  });
+  return malusHebdomadaire(oubliees, onVacation);
+}
+
+/**
+ * Recalcule série, record et jokers depuis le journal des journées closes.
+ *
+ * La série était purement incrémentale : rien ne permettait de la corriger
+ * après coup. Un rattrapage pouvant transformer une journée ratée en
+ * journée réussie, on la redérive de l'historique — la seule définition
+ * qui reste vraie quelles que soient les corrections. Les règles
+ * appliquées ici sont celles de `runRollover`, à la virgule près : toute
+ * modification de l'une doit suivre dans l'autre.
+ *
+ * Le record, lui, ne redescend jamais : le journal peut être plus court
+ * que la mémoire du compte.
+ */
+export async function rejouerSerie(userId: string, today: string) {
+  const [records, vacations, user] = await Promise.all([
+    prisma.dayRecord.findMany({
+      where: { userId, date: { lt: today } },
+      orderBy: { date: "asc" },
+      select: { date: true, success: true },
+    }),
+    vacationWeekStarts(userId),
+    prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { bestStreak: true },
+    }),
+  ]);
+
+  let streak = 0;
+  let best = 0;
+  let shields = 0;
+
+  for (const r of records) {
+    if (r.success) {
+      streak += 1;
+      best = Math.max(best, streak);
+      if (streak % 7 === 0) shields = Math.min(MAX_STREAK_SHIELDS, shields + 1);
+    } else if (vacations.has(startOfWeek(r.date))) {
+      // série gelée
+    } else if (shields > 0) {
+      shields -= 1;
+    } else {
+      streak = 0;
+    }
+  }
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { streak, bestStreak: Math.max(best, user.bestStreak), shields },
+  });
+  return { streak, shields };
 }
 
 /** Crée les tâches du jour à partir des routines actives. */

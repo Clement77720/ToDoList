@@ -15,13 +15,18 @@ function TaskRow({
   task,
   streak,
   onToggle,
+  rattrapage,
 }: {
   task: TaskDTO;
   streak: number;
   onToggle?: (id: string) => void;
+  rattrapage?: boolean;
 }) {
   const diff = DIFFICULTIES[task.difficulty];
-  const reward = taskReward(task.difficulty, { onTime: true, streakDays: streak });
+  const reward = taskReward(task.difficulty, {
+    onTime: !rattrapage,
+    streakDays: streak,
+  });
   const malus = MALUS[task.kind];
   const readOnly = !onToggle;
 
@@ -91,7 +96,7 @@ function TaskRow({
             </span>
             {!task.done && malus > 0 ? (
               <span className="block text-[10px] font-semibold text-fire tabular-nums">
-                −{malus} XP
+                −{malus} XP{rattrapage ? " perdus" : ""}
               </span>
             ) : null}
           </span>
@@ -107,12 +112,14 @@ function Group({
   streak,
   onToggle,
   note,
+  rattrapage,
 }: {
   kind: TaskKind;
   tasks: TaskDTO[];
   streak: number;
   onToggle?: (id: string) => void;
   note?: string;
+  rattrapage?: boolean;
 }) {
   if (tasks.length === 0) return null;
   const meta = TASK_KINDS[kind];
@@ -127,7 +134,13 @@ function Group({
       </h3>
       <ul className="flex flex-col gap-2">
         {tasks.map((t) => (
-          <TaskRow key={t.id} task={t} streak={streak} onToggle={onToggle} />
+          <TaskRow
+            key={t.id}
+            task={t}
+            streak={streak}
+            onToggle={onToggle}
+            rattrapage={rattrapage}
+          />
         ))}
       </ul>
     </div>
@@ -139,12 +152,16 @@ export function TaskList({
   streak,
   onToggle,
   footer,
+  rattrapage,
 }: {
   tasks: TaskDTO[];
   streak: number;
   /** Absent → liste en lecture seule (jour passé, aperçu). */
   onToggle?: (id: string) => void;
   footer?: React.ReactNode;
+  /** Journée close encore corrigeable : le malus est déjà encaissé et
+      le bonus de ponctualité perdu — les libellés doivent le dire. */
+  rattrapage?: boolean;
 }) {
   const quotidiennes = tasks.filter((t) => t.kind === "quotidienne");
   const hebdo = tasks.filter((t) => t.kind === "hebdomadaire");
@@ -213,13 +230,19 @@ export function TaskList({
         tasks={quotidiennes}
         streak={streak}
         onToggle={onToggle}
-        note={`obligatoires du lundi au vendredi · −${MALUS.quotidienne} XP chacune ce soir`}
+        rattrapage={rattrapage}
+        note={
+          rattrapage
+            ? `malus déjà encaissé · cocher te rend les ${MALUS.quotidienne} XP`
+            : `obligatoires du lundi au vendredi · −${MALUS.quotidienne} XP chacune ce soir`
+        }
       />
       <Group
         kind="hebdomadaire"
         tasks={hebdo}
         streak={streak}
         onToggle={onToggle}
+        rattrapage={rattrapage}
         note={`placées sur ce jour · −${MALUS.hebdomadaire} XP si non faites dimanche soir`}
       />
       <Group
@@ -227,6 +250,7 @@ export function TaskList({
         tasks={bonus}
         streak={streak}
         onToggle={onToggle}
+        rattrapage={rattrapage}
         note="aucun malus, que du gain"
       />
 
